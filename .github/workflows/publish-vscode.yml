@@ -9,14 +9,9 @@ on:
 permissions:
   contents: read
 
-env:
-  SERVER_DIR: editors/vscode-mcdpl/server/linux-x64
-  VSCE_TARGET: linux-x64
-  VSIX_NAME: mcdpl-vscode-linux-x64.vsix
-
 jobs:
-  publish-vscode:
-    name: Build and publish VSCode extension
+  validate:
+    name: Validate workspace
     runs-on: ubuntu-latest
 
     steps:
@@ -47,9 +42,6 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Build release language server
-        run: cargo build --release -p mcdp-lsp
-
       - name: Install VSCode extension dependencies
         working-directory: editors/vscode-mcdpl
         run: npm ci
@@ -58,28 +50,81 @@ jobs:
         working-directory: editors/vscode-mcdpl
         run: npm run check
 
-      - name: Bundle Linux language server
+  publish-vscode:
+    name: Publish VSCode extension (${{ matrix.vsce_target }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-latest
+            vsce_target: linux-x64
+            platform_dir: linux-x64
+            server_binary: mcdp-lsp
+            vsix_name: mcdpl-vscode-linux-x64.vsix
+          - os: macos-15-intel
+            vsce_target: darwin-x64
+            platform_dir: darwin-x64
+            server_binary: mcdp-lsp
+            vsix_name: mcdpl-vscode-darwin-x64.vsix
+          - os: macos-15
+            vsce_target: darwin-arm64
+            platform_dir: darwin-arm64
+            server_binary: mcdp-lsp
+            vsix_name: mcdpl-vscode-darwin-arm64.vsix
+          - os: windows-latest
+            vsce_target: win32-x64
+            platform_dir: win32-x64
+            server_binary: mcdp-lsp.exe
+            vsix_name: mcdpl-vscode-win32-x64.vsix
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.90.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: editors/vscode-mcdpl/package-lock.json
+
+      - name: Build release language server
+        run: cargo build --release -p mcdp-lsp
+
+      - name: Install VSCode extension dependencies
+        working-directory: editors/vscode-mcdpl
+        run: npm ci
+
+      - name: Bundle language server
+        shell: bash
         run: |
-          mkdir -p "$SERVER_DIR"
-          cp target/release/mcdp-lsp "$SERVER_DIR/mcdp-lsp"
-          chmod +x "$SERVER_DIR/mcdp-lsp"
+          server_dir="editors/vscode-mcdpl/server/${{ matrix.platform_dir }}"
+          mkdir -p "$server_dir"
+          cp "target/release/${{ matrix.server_binary }}" "$server_dir/${{ matrix.server_binary }}"
+          chmod +x "$server_dir/${{ matrix.server_binary }}"
 
       - name: Set CI extension version
         working-directory: editors/vscode-mcdpl
-        run: npm version --no-git-tag-version "0.1.${GITHUB_RUN_NUMBER}"
+        run: npm version --no-git-tag-version "0.1.${{ github.run_number }}"
 
       - name: Package VSCode extension
         working-directory: editors/vscode-mcdpl
-        run: npx --yes @vscode/vsce package --target "$VSCE_TARGET" --out "$VSIX_NAME"
+        run: npx --yes @vscode/vsce package --target "${{ matrix.vsce_target }}" --out "${{ matrix.vsix_name }}"
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mcdpl-vscode
-          path: editors/vscode-mcdpl/mcdpl-vscode-linux-x64.vsix
+          name: mcdpl-vscode-${{ matrix.vsce_target }}
+          path: editors/vscode-mcdpl/${{ matrix.vsix_name }}
 
       - name: Publish VSCode extension
         working-directory: editors/vscode-mcdpl
         env:
-          AZURE_PERSONAL_ACCESS_TOKEN: ${{ secrets.AZURE_PERSONAL_ACCESS_TOKEN }}
-        run: npx --yes @vscode/vsce publish --packagePath "$VSIX_NAME" -p "$AZURE_PERSONAL_ACCESS_TOKEN"
+          VSCE_PAT: ${{ secrets.AZURE_PERSONAL_ACCESS_TOKEN }}
+        run: npx --yes @vscode/vsce publish --packagePath "${{ matrix.vsix_name }}"
