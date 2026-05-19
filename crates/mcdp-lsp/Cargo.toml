@@ -1,0 +1,21 @@
+[package]
+name = "mcdp-lsp"
+description = "Language server for MCDPL editor integrations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+mcdp-language.workspace = true
+tokio.workspace = true
+tower-lsp.workspace = true
+
+[[bin]]
+name = "mcdp-lsp"
+path = "src/main.rs"
+
+[lints]
+workspace = true

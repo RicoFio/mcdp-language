@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/mcdp-language",
+    "crates/mcdp-lsp",
+]
+resolver = "2"
+
+[workspace.package]
+authors = ["Riccardo Fiorista"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/RicoFio/mcdp-language"
+rust-version = "1.90"
+version = "0.1.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[workspace.dependencies]
+mcdp-language = { path = "crates/mcdp-language" }
+tokio = { version = "1.52.3", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
+tower-lsp = "0.20.0"

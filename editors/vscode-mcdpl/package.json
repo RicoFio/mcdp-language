@@ -1,0 +1,139 @@
+{
+  "name": "mcdpl-vscode",
+  "displayName": "MCDPL Language Support",
+  "description": "VSCode language support for MCDPL backed by the MCDPL language server.",
+  "version": "0.1.0",
+  "publisher": "mcdp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RicoFio/mcdp-language.git",
+    "directory": "editors/vscode-mcdpl"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:mcdpl"
+  ],
+  "main": "./extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "scripts": {
+    "check": "node --check extension.js"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "mcdpl",
+        "aliases": [
+          "MCDPL",
+          "mcdpl"
+        ],
+        "extensions": [
+          ".mcdp",
+          ".mcdp_interface",
+          ".mcdp_poset",
+          ".mcdp_template"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[mcdpl]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4
+      },
+      "editor.semanticTokenColorCustomizations": {
+        "enabled": true,
+        "rules": {
+          "mcdplProvidedVariable:mcdpl": {
+            "foreground": "#1B8F5A"
+          },
+          "mcdplRequiredVariable:mcdpl": {
+            "foreground": "#C2413B"
+          },
+          "mcdplInstance:mcdpl": {
+            "foreground": "#D97706"
+          },
+          "mcdplModelReference:mcdpl": {
+            "foreground": "#2563EB"
+          },
+          "mcdplResourceBinding:mcdpl": {
+            "foreground": "#7C3AED"
+          }
+        }
+      }
+    },
+    "semanticTokenTypes": [
+      {
+        "id": "mcdplProvidedVariable",
+        "superType": "variable",
+        "description": "MCDPL variable declared by a provides statement."
+      },
+      {
+        "id": "mcdplRequiredVariable",
+        "superType": "variable",
+        "description": "MCDPL variable declared by a requires statement."
+      },
+      {
+        "id": "mcdplInstance",
+        "superType": "variable",
+        "description": "MCDPL local instance binding."
+      },
+      {
+        "id": "mcdplModelReference",
+        "superType": "type",
+        "description": "MCDPL referenced model or poset document."
+      },
+      {
+        "id": "mcdplResourceBinding",
+        "superType": "string",
+        "description": "MCDPL implemented-by YAML resource binding."
+      }
+    ],
+    "configuration": {
+      "title": "MCDPL",
+      "properties": {
+        "mcdpl.server.command": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Optional command used to launch the MCDPL language server. Leave empty to use the bundled server when present, then `target/debug/mcdp-lsp`, then `cargo run -p mcdp-lsp`."
+        },
+        "mcdpl.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine-overridable",
+          "markdownDescription": "Extra arguments passed to the configured MCDPL language server command."
+        },
+        "mcdpl.server.cwd": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Working directory for the MCDPL language server. Leave empty to auto-detect the Rust workspace root."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}

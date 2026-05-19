@@ -1,0 +1,12 @@
+[package]
+name = "mcdp-language"
+description = "Shared MCDPL language front-end APIs for compiler and editor tooling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
