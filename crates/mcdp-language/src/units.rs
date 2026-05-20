@@ -117,6 +117,16 @@ fn label_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
 fn dimension_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
     match atom.trim() {
         "$" => vec![("USD".to_owned(), 1)],
+        "N" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 1),
+            ("s".to_owned(), -2),
+        ],
+        "Nm" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -2),
+        ],
         "J" | "kJ" | "Wh" | "kWh" => vec![("W".to_owned(), 1), ("s".to_owned(), 1)],
         "g" | "mg" => vec![("kg".to_owned(), 1)],
         "deg" | "degree" | "degrees" | "°" => vec![("rad".to_owned(), 1)],

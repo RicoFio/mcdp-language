@@ -177,4 +177,50 @@ mcdp {
                     == Some(NumberOrString::String("compiler.duplicate-port".to_owned()))
         }));
     }
+
+    #[test]
+    fn document_diagnostics_include_cross_namespace_duplicate_names() {
+        let diagnostics = document_diagnostics(
+            "file:///tmp/duplicate-name.mcdp",
+            "\
+dp {
+  provides name [Nat]
+  requires name [J]
+
+  sub name = instance `model
+
+  implemented-by yaml resource(\"test\")
+}
+",
+            None,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.source.as_deref() == Some("mcdp-compiler")
+                && diagnostic.code
+                    == Some(NumberOrString::String("compiler.duplicate-name".to_owned()))
+        }));
+    }
+
+    #[test]
+    fn document_diagnostics_reject_trailing_tokens_after_port_posets() {
+        let diagnostics = document_diagnostics(
+            "file:///tmp/trailing-port-poset.mcdp",
+            "\
+dp {
+  provides name [N];
+  requires name [J]hallo;
+}
+",
+            None,
+        );
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.source.as_deref() == Some("mcdp-syntax")
+                && diagnostic.code
+                    == Some(NumberOrString::String(
+                        "syntax.trailing-port-poset-token".to_owned(),
+                    ))
+        }));
+    }
 }

@@ -385,7 +385,7 @@ fn parse_braced_body(
         None => tokens.len(),
     };
     SyntaxBody::Braced {
-        statements: split_statements(tokens, open_index + 1, close_index),
+        statements: split_statements(source_id, tokens, open_index + 1, close_index, diagnostics),
     }
 }
 
@@ -526,7 +526,13 @@ fn find_matching_forward(
     None
 }
 
-fn split_statements(tokens: &[Token], start: usize, end: usize) -> Vec<Statement> {
+fn split_statements(
+    source_id: &SourceId,
+    tokens: &[Token],
+    start: usize,
+    end: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<Statement> {
     let mut statements = Vec::new();
     let mut segment_start = start;
     let mut depth = DelimiterDepth::default();
@@ -535,6 +541,14 @@ fn split_statements(tokens: &[Token], start: usize, end: usize) -> Vec<Statement
         let token = &tokens[index];
         depth.observe(token);
         if depth.is_zero() && (token.kind == TokenKind::Newline || token.text.as_str() == ";") {
+            if let Some(range) = trailing_port_poset_token_range(
+                tokens,
+                segment_start,
+                index,
+                (token.text.as_str() == ";").then_some(token.range),
+            ) {
+                diagnostics.push(trailing_port_poset_diagnostic(source_id, range));
+            }
             if let Some(statement) = build_statement(tokens, segment_start, index) {
                 statements.push(statement);
             }
@@ -542,11 +556,50 @@ fn split_statements(tokens: &[Token], start: usize, end: usize) -> Vec<Statement
         }
     }
 
+    if let Some(range) = trailing_port_poset_token_range(tokens, segment_start, end, None) {
+        diagnostics.push(trailing_port_poset_diagnostic(source_id, range));
+    }
     if let Some(statement) = build_statement(tokens, segment_start, end) {
         statements.push(statement);
     }
 
     statements
+}
+
+fn trailing_port_poset_token_range(
+    tokens: &[Token],
+    start: usize,
+    end: usize,
+    delimiter_range: Option<TextRange>,
+) -> Option<TextRange> {
+    let first = first_non_trivia_in_range(tokens, start, end)?;
+    if !matches!(tokens[first].text.as_str(), "provides" | "requires") {
+        return None;
+    }
+
+    let open_index = find_next_text(tokens, first + 1, "[")?;
+    if open_index >= end {
+        return None;
+    }
+    let close_index = find_matching_forward(tokens, open_index, "[", "]")?;
+    if close_index >= end {
+        return None;
+    }
+
+    tokens[close_index + 1..end]
+        .iter()
+        .find(|token| !is_trivia(token.kind))
+        .map(|token| token.range)
+        .or(delimiter_range)
+}
+
+fn trailing_port_poset_diagnostic(source_id: &SourceId, range: TextRange) -> Diagnostic {
+    Diagnostic::error(
+        "syntax.trailing-port-poset-token",
+        "unexpected token after port poset declaration",
+    )
+    .with_help("After the closing `]`, only whitespace or a `#` comment is allowed before the statement ends.")
+    .with_span(TextSpan::new(source_id.clone(), range))
 }
 
 fn split_entries(tokens: &[Token], start: usize, end: usize) -> Vec<SyntaxEntry> {
@@ -1013,6 +1066,23 @@ dp {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "syntax.unbalanced-delimiter")
         );
+    }
+
+    #[test]
+    fn reports_trailing_tokens_after_port_poset() {
+        for source in ["dp { provides name [N]; }", "dp { requires name [J]hallo }"] {
+            let parsed = parse_document(SourceId::new("bad.mcdp"), source);
+
+            assert!(parsed.has_errors(), "{source}");
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == "syntax.trailing-port-poset-token"),
+                "{source}: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     fn statement_kinds(parsed: &super::ParsedDocument) -> Vec<StatementKind> {
