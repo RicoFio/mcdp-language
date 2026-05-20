@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::line_index::LineIndex;
-use crate::project_symbols::{PortDirection, PortSymbol, ProjectSymbolIndex};
+use crate::project_symbols::{PortDirection, PortSymbol, ProjectSymbolIndex, primitive_posets};
 
 pub(crate) fn options() -> CompletionOptions {
     CompletionOptions {
@@ -40,6 +40,9 @@ pub(crate) fn items(
 
     if is_resource_string_context(prefix) {
         return resource_path_items(uri);
+    }
+    if let Some(prefix) = port_poset_context(prefix) {
+        return primitive_poset_items(&prefix);
     }
     if let Some(context) = instance_port_context(suffix) {
         return instance_port_items(uri, symbols, &context, replace_range);
@@ -171,11 +174,33 @@ fn is_resource_string_context(prefix: &str) -> bool {
     !after_quote.contains(quote)
 }
 
+fn port_poset_context(prefix: &str) -> Option<String> {
+    let line_prefix = prefix.rsplit_once('\n').map_or(prefix, |(_, line)| line);
+    let trimmed = line_prefix.trim_start();
+    if !(trimmed.starts_with("provides ") || trimmed.starts_with("requires ")) {
+        return None;
+    }
+
+    let bracket = line_prefix.rfind('[')?;
+    let after_bracket = &line_prefix[bracket + '['.len_utf8()..];
+    if after_bracket.contains(']') || after_bracket.trim_start().starts_with('`') {
+        return None;
+    }
+
+    Some(
+        after_bracket
+            .rsplit(|ch| !is_completion_name_char(ch))
+            .next()
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
 fn top_level_document_items() -> Vec<CompletionItem> {
     [
-        snippet_item("mcdp", "MCDP document", "mcdp {\n  $0\n}"),
-        snippet_item("dp", "DP document", "dp {\n  $0\n}"),
-        snippet_item("catalog", "Catalog document", "catalog {\n  $0\n}"),
+        snippet_item("mcdp", "MCDP document", "mcdp {\n    $0\n}"),
+        snippet_item("dp", "DP document", "dp {\n    $0\n}"),
+        snippet_item("catalog", "Catalog document", "catalog {\n    $0\n}"),
         snippet_item(
             "choose",
             "Choice composition",
@@ -186,12 +211,12 @@ fn top_level_document_items() -> Vec<CompletionItem> {
             "Intersection composition",
             "intersection (${1:Label}: `${2:model})",
         ),
-        snippet_item("interface", "Interface document", "interface {\n  $0\n}"),
-        snippet_item("poset", "Poset document", "poset {\n  $0\n}"),
+        snippet_item("interface", "Interface document", "interface {\n    $0\n}"),
+        snippet_item("poset", "Poset document", "poset {\n    $0\n}"),
         snippet_item(
             "template",
             "Template document",
-            "template [${1:T}: `${2:Interface}] mcdp {\n  $0\n}",
+            "template [${1:T}: `${2:Interface}] mcdp {\n    $0\n}",
         ),
         snippet_item(
             "specialize",
@@ -331,6 +356,21 @@ fn resource_path_items(uri: &Url) -> Vec<CompletionItem> {
     resource_paths(uri)
         .into_iter()
         .map(|path| plain_item(&path, CompletionItemKind::FILE, "Resource path", &path))
+        .collect()
+}
+
+fn primitive_poset_items(prefix: &str) -> Vec<CompletionItem> {
+    primitive_posets()
+        .iter()
+        .filter(|primitive| primitive.name.starts_with(prefix))
+        .map(|primitive| {
+            plain_item(
+                primitive.name,
+                CompletionItemKind::UNIT,
+                &format!("Primitive poset: {}", primitive.description),
+                primitive.name,
+            )
+        })
         .collect()
 }
 
@@ -604,6 +644,14 @@ mod tests {
             item_by_label(&items, "mcdp").insert_text_format,
             Some(InsertTextFormat::SNIPPET)
         );
+        assert_eq!(
+            item_by_label(&items, "mcdp").insert_text.as_deref(),
+            Some("mcdp {\n    $0\n}")
+        );
+        assert_eq!(
+            item_by_label(&items, "template").insert_text.as_deref(),
+            Some("template [${1:T}: `${2:Interface}] mcdp {\n    $0\n}")
+        );
     }
 
     #[test]
@@ -619,6 +667,40 @@ mod tests {
         assert!(labels.contains(&"implemented-by yaml resource"));
         assert!(labels.contains(&"implements"));
         assert!(labels.contains(&"import model"));
+    }
+
+    #[test]
+    fn primitive_poset_completions_appear_inside_empty_port_brackets() {
+        let source = "dp {\n  provides name [\n}\n";
+        let uri = test_file_url(Path::new("/tmp/model.mcdp"));
+        let items = items(&uri, source, position_after(source, "["), None);
+        let labels = labels(&items);
+
+        assert!(labels.contains(&"Nat"));
+        assert!(labels.contains(&"J"));
+        assert!(labels.contains(&"Nm"));
+        assert!(labels.contains(&"N"));
+        assert_eq!(
+            item_by_label(&items, "Nat").detail.as_deref(),
+            Some("Primitive poset: Natural numbers")
+        );
+        assert_eq!(
+            item_by_label(&items, "Nat").insert_text.as_deref(),
+            Some("Nat")
+        );
+    }
+
+    #[test]
+    fn primitive_poset_completions_filter_by_typed_prefix() {
+        let source = "dp {\n  provides name [N\n}\n";
+        let uri = test_file_url(Path::new("/tmp/model.mcdp"));
+        let items = items(&uri, source, position_after(source, "[N"), None);
+        let labels = labels(&items);
+
+        assert!(labels.contains(&"Nat"));
+        assert!(labels.contains(&"Nm"));
+        assert!(labels.contains(&"N"));
+        assert!(!labels.contains(&"J"));
     }
 
     #[test]

@@ -805,11 +805,13 @@ impl DocumentSymbols {
         let token = lex(&self.source)
             .into_iter()
             .find(|token| contains_offset(token.range, offset))?;
-        let contents = term_hover_text(&token.text)?;
+        let contents = term_hover_text(&token.text)
+            .map(str::to_owned)
+            .or_else(|| primitive_poset_hover_text(&token.text))?;
 
         Some(HoverInfo {
             range: token.range,
-            contents: contents.to_owned(),
+            contents,
         })
     }
 }
@@ -911,6 +913,75 @@ pub(crate) struct ProjectDiagnostic {
     pub(crate) severity: Severity,
     pub(crate) range: TextRange,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PrimitivePoset {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+}
+
+pub(crate) fn primitive_posets() -> &'static [PrimitivePoset] {
+    PRIMITIVE_POSETS
+}
+
+const PRIMITIVE_POSETS: &[PrimitivePoset] = &[
+    PrimitivePoset {
+        name: "Nat",
+        description: "Natural numbers",
+    },
+    PrimitivePoset {
+        name: "Bool",
+        description: "Boolean truth values",
+    },
+    PrimitivePoset {
+        name: "Real",
+        description: "Real numbers",
+    },
+    PrimitivePoset {
+        name: "Reals",
+        description: "Real numbers",
+    },
+    PrimitivePoset {
+        name: "N",
+        description: "newtons, force",
+    },
+    PrimitivePoset {
+        name: "Nm",
+        description: "newton-meters, torque or energy",
+    },
+    PrimitivePoset {
+        name: "J",
+        description: "joules, energy",
+    },
+    PrimitivePoset {
+        name: "W",
+        description: "watts, power",
+    },
+    PrimitivePoset {
+        name: "USD",
+        description: "US dollars, cost",
+    },
+    PrimitivePoset {
+        name: "kg",
+        description: "kilograms, mass",
+    },
+    PrimitivePoset {
+        name: "g",
+        description: "grams, mass",
+    },
+    PrimitivePoset {
+        name: "m",
+        description: "meters, length",
+    },
+    PrimitivePoset {
+        name: "s",
+        description: "seconds, time",
+    },
+    PrimitivePoset {
+        name: "rad",
+        description: "radians, angle",
+    },
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PortSymbol {
@@ -2100,6 +2171,16 @@ fn unit_base_and_exponent(token: &str) -> (String, i32) {
 fn dimension_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
     match atom.trim() {
         "$" => vec![("USD".to_owned(), 1)],
+        "N" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 1),
+            ("s".to_owned(), -2),
+        ],
+        "Nm" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -2),
+        ],
         "W" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 2),
@@ -2296,39 +2377,28 @@ fn is_unit_constructor(atom: &str) -> bool {
 }
 
 fn is_base_unit_atom(atom: &str) -> bool {
-    matches!(
-        atom,
-        "1" | "Nat"
-            | "Bool"
-            | "Real"
-            | "Reals"
-            | "dimensionless"
-            | "unitless"
-            | "$"
-            | "USD"
-            | "m"
-            | "s"
-            | "kg"
-            | "g"
-            | "mg"
-            | "rad"
-            | "deg"
-            | "degree"
-            | "degrees"
-            | "°"
-            | "W"
-            | "J"
-            | "kJ"
-            | "Wh"
-            | "kWh"
-            | "h"
-            | "hr"
-            | "hour"
-            | "hours"
-            | "min"
-            | "minute"
-            | "minutes"
-    )
+    primitive_posets().iter().any(|poset| poset.name == atom)
+        || matches!(
+            atom,
+            "1" | "dimensionless"
+                | "unitless"
+                | "$"
+                | "mg"
+                | "deg"
+                | "degree"
+                | "degrees"
+                | "°"
+                | "kJ"
+                | "Wh"
+                | "kWh"
+                | "h"
+                | "hr"
+                | "hour"
+                | "hours"
+                | "min"
+                | "minute"
+                | "minutes"
+        )
 }
 
 fn constructor_inner<'a>(text: &'a str, name: &str) -> Option<&'a str> {
@@ -2415,6 +2485,16 @@ fn term_hover_text(text: &str) -> Option<&'static str> {
         ),
         _ => None,
     }
+}
+
+fn primitive_poset_hover_text(text: &str) -> Option<String> {
+    let primitive = primitive_posets()
+        .iter()
+        .find(|primitive| primitive.name == text)?;
+    Some(format!(
+        "**Primitive poset** `{}`\n\n{}.",
+        primitive.name, primitive.description
+    ))
 }
 
 #[cfg(test)]
@@ -2710,6 +2790,32 @@ mcdp {
         );
         assert!(variable_hover.contents.contains("Required variable"));
         assert!(variable_hover.contents.contains("dp_t1"));
+    }
+
+    #[test]
+    fn hover_explains_primitive_posets_and_units() {
+        let temp_dir = TempDir::new("primitive-poset-hover");
+        let source = "\
+dp {
+  provides count [Nat]
+  requires energy [J]
+}
+";
+        temp_dir.write("unit.mcdp", source);
+        let uri = temp_dir.url("unit.mcdp");
+        let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
+
+        let nat_hover = must_option(
+            index.hover_at(&uri, offset_of(source, "Nat")),
+            "missing Nat hover",
+        );
+        assert!(nat_hover.contents.contains("Natural numbers"));
+
+        let joule_hover = must_option(
+            index.hover_at(&uri, offset_of(source, "J")),
+            "missing J hover",
+        );
+        assert!(joule_hover.contents.contains("joule"));
     }
 
     #[test]

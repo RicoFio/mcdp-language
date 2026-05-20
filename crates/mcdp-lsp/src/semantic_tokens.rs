@@ -139,19 +139,28 @@ impl<'a> DocumentSemanticRoles<'a> {
         if self.is_model_reference_name(range) {
             return Some(RoleDecision::Token(TOKEN_TYPE_MODEL_REFERENCE));
         }
-        if self.is_instance_name(text, kind, range) {
-            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
-        }
         if let Some(direction) = self.instance_scoped_variable_direction(range) {
             return Some(RoleDecision::Token(match direction {
                 PortDirection::Provided => TOKEN_TYPE_PROVIDED_VARIABLE,
                 PortDirection::Required => TOKEN_TYPE_REQUIRED_VARIABLE,
             }));
         }
-        if self.is_provided_variable(text, kind, range) {
+        if self.is_provided_variable_declaration(range) {
             return Some(RoleDecision::Token(TOKEN_TYPE_PROVIDED_VARIABLE));
         }
-        if self.is_required_variable(text, kind, range) {
+        if self.is_required_variable_declaration(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_REQUIRED_VARIABLE));
+        }
+        if self.is_instance_name_declaration(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
+        }
+        if self.is_instance_name_reference(text, kind) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
+        }
+        if self.is_provided_variable_reference(text, kind) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_PROVIDED_VARIABLE));
+        }
+        if self.is_required_variable_reference(text, kind) {
             return Some(RoleDecision::Token(TOKEN_TYPE_REQUIRED_VARIABLE));
         }
 
@@ -213,13 +222,20 @@ impl<'a> DocumentSemanticRoles<'a> {
             .any(|reference| reference.name_range == range)
     }
 
-    fn is_instance_name(&self, text: &str, kind: TokenKind, range: TextRange) -> bool {
+    fn is_instance_name_declaration(&self, range: TextRange) -> bool {
+        self.symbols
+            .instances
+            .iter()
+            .any(|instance| instance.name_range == range)
+    }
+
+    fn is_instance_name_reference(&self, text: &str, kind: TokenKind) -> bool {
         is_name_token(kind)
             && self
                 .symbols
                 .instances
                 .iter()
-                .any(|instance| instance.name_range == range || instance.name == text)
+                .any(|instance| instance.name == text)
     }
 
     fn instance_scoped_variable_direction(&self, range: TextRange) -> Option<PortDirection> {
@@ -229,22 +245,26 @@ impl<'a> DocumentSemanticRoles<'a> {
             .map(|reference| reference.direction)
     }
 
-    fn is_provided_variable(&self, text: &str, kind: TokenKind, range: TextRange) -> bool {
-        is_name_token(kind)
-            && self
-                .symbols
-                .provides
-                .iter()
-                .any(|port| port.name_range == range || port.name == text)
+    fn is_provided_variable_declaration(&self, range: TextRange) -> bool {
+        self.symbols
+            .provides
+            .iter()
+            .any(|port| port.name_range == range)
     }
 
-    fn is_required_variable(&self, text: &str, kind: TokenKind, range: TextRange) -> bool {
-        is_name_token(kind)
-            && self
-                .symbols
-                .requires
-                .iter()
-                .any(|port| port.name_range == range || port.name == text)
+    fn is_provided_variable_reference(&self, text: &str, kind: TokenKind) -> bool {
+        is_name_token(kind) && self.symbols.provides.iter().any(|port| port.name == text)
+    }
+
+    fn is_required_variable_declaration(&self, range: TextRange) -> bool {
+        self.symbols
+            .requires
+            .iter()
+            .any(|port| port.name_range == range)
+    }
+
+    fn is_required_variable_reference(&self, text: &str, kind: TokenKind) -> bool {
+        is_name_token(kind) && self.symbols.requires.iter().any(|port| port.name == text)
     }
 }
 
@@ -390,6 +410,42 @@ mcdp {
             source,
             "dp_t1",
             source.rfind("dp_t1").expect("test source has dp_t1"),
+            TOKEN_TYPE_INSTANCE
+        )));
+    }
+
+    #[test]
+    fn duplicate_name_declarations_keep_their_declaration_role_colors() {
+        let source = "\
+dp {
+  provides name [Nat]
+  requires name [J]
+
+  sub name = instance `model
+
+  implemented-by yaml resource(\"test\")
+}
+";
+        let uri = test_file_url("/tmp/duplicate-name.mcdp");
+        let symbols = DocumentSymbols::parse(uri, source);
+        let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
+
+        assert!(tokens.contains(&absolute_token_at_offset(
+            source,
+            "name",
+            offset_after(source, "provides "),
+            TOKEN_TYPE_PROVIDED_VARIABLE
+        )));
+        assert!(tokens.contains(&absolute_token_at_offset(
+            source,
+            "name",
+            offset_after(source, "requires "),
+            TOKEN_TYPE_REQUIRED_VARIABLE
+        )));
+        assert!(tokens.contains(&absolute_token_at_offset(
+            source,
+            "name",
+            offset_after(source, "sub "),
             TOKEN_TYPE_INSTANCE
         )));
     }
@@ -541,5 +597,9 @@ mcdp {
             Some(offset) => offset,
             None => panic!("missing `{needle}` in test source"),
         }
+    }
+
+    fn offset_after(source: &str, needle: &str) -> usize {
+        offset_of(source, needle) + needle.len()
     }
 }

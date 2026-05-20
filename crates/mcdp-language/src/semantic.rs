@@ -596,6 +596,15 @@ fn detect_duplicate_declarations(model: &SemanticModel, diagnostics: &mut Vec<Di
         }
     }
 
+    let mut names = BTreeMap::<String, (&'static str, TextSpan)>::new();
+    for port in &model.ports {
+        let role = match port.direction {
+            PortDirection::Provides => "provided port",
+            PortDirection::Requires => "required port",
+        };
+        detect_duplicate_name(&mut names, diagnostics, &port.name, role, &port.span);
+    }
+
     let mut instances = BTreeMap::<String, TextSpan>::new();
     for instance in &model.instances {
         if let Some(first_span) = instances.insert(instance.name.clone(), instance.span.clone()) {
@@ -607,6 +616,38 @@ fn detect_duplicate_declarations(model: &SemanticModel, diagnostics: &mut Vec<Di
                 .with_span(first_span)
                 .with_help("Use unique local instance names."),
             );
+        }
+        detect_duplicate_name(
+            &mut names,
+            diagnostics,
+            &instance.name,
+            "instance",
+            &instance.span,
+        );
+    }
+}
+
+fn detect_duplicate_name(
+    names: &mut BTreeMap<String, (&'static str, TextSpan)>,
+    diagnostics: &mut Vec<Diagnostic>,
+    name: &str,
+    role: &'static str,
+    span: &TextSpan,
+) {
+    match names.get(name) {
+        Some((first_role, _)) if *first_role != role => diagnostics.push(
+            Diagnostic::error(
+                "compiler.duplicate-name",
+                format!("name `{name}` is already used as a {first_role}"),
+            )
+            .with_span(span.clone())
+            .with_help(
+                "Use distinct names for provided ports, required ports, and local instances.",
+            ),
+        ),
+        Some(_) => {}
+        None => {
+            names.insert(name.to_owned(), (role, span.clone()));
         }
     }
 }
@@ -1060,6 +1101,33 @@ mcdp {
             diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code == "compiler.duplicate-port")
+        );
+    }
+
+    #[test]
+    fn reports_duplicate_names_across_ports_and_instances() {
+        let source = SourceId::new("bad.mcdp");
+        let parsed = parse_document(
+            source.clone(),
+            "\
+dp {
+  provides name [Nat]
+  requires name [J]
+
+  sub name = instance `model
+
+  implemented-by yaml resource(\"test\")
+}
+",
+        );
+
+        let (_model, diagnostics) = lower_document(source, &parsed);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "compiler.duplicate-name"),
+            "{diagnostics:?}"
         );
     }
 }

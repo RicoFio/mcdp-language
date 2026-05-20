@@ -25,7 +25,8 @@
     "workspace"
   ],
   "scripts": {
-    "check": "node --check extension.js"
+    "check": "node --check extension.js && node --check scripts/preflight.js",
+    "preflight": "node scripts/preflight.js"
   },
   "contributes": {
     "languages": [
@@ -58,7 +59,8 @@
           "strings": "off"
         },
         "editor.insertSpaces": true,
-        "editor.tabSize": 4
+        "editor.tabSize": 4,
+        "editor.detectIndentation": false
       },
       "editor.semanticTokenColorCustomizations": {
         "enabled": true,

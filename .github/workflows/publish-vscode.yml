@@ -53,6 +53,10 @@ jobs:
         working-directory: editors/vscode-mcdpl
         run: npm run check
 
+      - name: Preflight VSCode extension metadata
+        working-directory: editors/vscode-mcdpl
+        run: npm run preflight
+
   publish-vscode:
     name: Publish VSCode extension (${{ matrix.vsce_target }})
     needs: validate
@@ -104,6 +108,10 @@ jobs:
         working-directory: editors/vscode-mcdpl
         run: npm ci
 
+      - name: Copy license into VSCode package
+        shell: bash
+        run: cp LICENSE editors/vscode-mcdpl/LICENSE
+
       - name: Bundle language server
         shell: bash
         run: |
@@ -116,9 +124,16 @@ jobs:
         working-directory: editors/vscode-mcdpl
         run: npm version --no-git-tag-version "0.1.${{ github.run_number }}"
 
+      - name: Preflight VSCode package
+        working-directory: editors/vscode-mcdpl
+        env:
+          MCDPL_REQUIRE_PACKAGED_LICENSE: "1"
+          MCDPL_SERVER_TARGET: ${{ matrix.platform_dir }}
+        run: npm run preflight
+
       - name: Package VSCode extension
         working-directory: editors/vscode-mcdpl
-        run: npx --yes @vscode/vsce package --target "${{ matrix.vsce_target }}" --out "${{ matrix.vsix_name }}"
+        run: npx --yes @vscode/vsce package --readme-path MARKETPLACE.md --target "${{ matrix.vsce_target }}" --out "${{ matrix.vsix_name }}"
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
