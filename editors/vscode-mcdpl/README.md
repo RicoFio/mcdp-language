@@ -1,4 +1,4 @@
-# MCDPL Co-Design Tools
+# MCDPL - Co-Design Language Tools
 
 Development VSCode client for the `mcdp-lsp` stdio language server.
 

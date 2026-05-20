@@ -1,3 +1,6 @@
-.vscode/**
-npm-debug.log
+.gitignore
+.vscode/
+README.md
+MARKETPLACE.md
+scripts/
 *.vsix
