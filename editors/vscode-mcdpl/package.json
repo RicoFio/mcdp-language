@@ -1,9 +1,9 @@
 {
   "name": "mcdpl-vscode",
-  "displayName": "MCDPL Language Support",
+  "displayName": "MCDPL Co-Design Tools",
   "description": "VSCode language support for MCDPL backed by the MCDPL language server.",
   "version": "0.1.0",
-  "publisher": "mcdp",
+  "publisher": "ZardiniLab",
   "license": "MIT",
   "repository": {
     "type": "git",
