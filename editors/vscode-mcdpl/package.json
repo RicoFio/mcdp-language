@@ -20,6 +20,7 @@
     "onLanguage:mcdpl"
   ],
   "main": "./extension.js",
+  "icon": "icons/web-app-manifest-192x192.png",
   "extensionKind": [
     "workspace"
   ],
@@ -40,6 +41,10 @@
           ".mcdp_poset",
           ".mcdp_template"
         ],
+        "icon": {
+          "light": "icons/favicon.svg",
+          "dark": "icons/favicon.svg"
+        },
         "configuration": "./language-configuration.json"
       }
     ],
@@ -65,13 +70,16 @@
             "foreground": "#C2413B"
           },
           "mcdplInstance:mcdpl": {
-            "foreground": "#D97706"
+            "foreground": "#A855F7"
           },
           "mcdplModelReference:mcdpl": {
             "foreground": "#2563EB"
           },
           "mcdplResourceBinding:mcdpl": {
-            "foreground": "#7C3AED"
+            "foreground": "#D97706"
+          },
+          "mcdplDocumentKind:mcdpl": {
+            "foreground": "#A855F7"
           }
         }
       }
@@ -90,17 +98,22 @@
       {
         "id": "mcdplInstance",
         "superType": "variable",
-        "description": "MCDPL local instance binding."
+        "description": "MCDPL local instance binding and referenced instance model."
       },
       {
         "id": "mcdplModelReference",
         "superType": "type",
-        "description": "MCDPL referenced model or poset document."
+        "description": "MCDPL poset or non-instance backtick reference."
       },
       {
         "id": "mcdplResourceBinding",
         "superType": "string",
-        "description": "MCDPL implemented-by YAML resource binding."
+        "description": "MCDPL implemented-by YAML resource declaration prefix."
+      },
+      {
+        "id": "mcdplDocumentKind",
+        "superType": "keyword",
+        "description": "MCDPL document kind opener."
       }
     ],
     "configuration": {

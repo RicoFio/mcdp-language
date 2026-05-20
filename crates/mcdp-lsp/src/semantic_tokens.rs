@@ -21,6 +21,7 @@ const TOKEN_TYPE_REQUIRED_VARIABLE: u32 = 7;
 const TOKEN_TYPE_INSTANCE: u32 = 8;
 const TOKEN_TYPE_MODEL_REFERENCE: u32 = 9;
 const TOKEN_TYPE_RESOURCE_BINDING: u32 = 10;
+const TOKEN_TYPE_DOCUMENT_KIND: u32 = 11;
 
 pub(crate) fn server_capabilities() -> SemanticTokensServerCapabilities {
     SemanticTokensServerCapabilities::SemanticTokensOptions(options())
@@ -49,6 +50,7 @@ fn legend() -> SemanticTokensLegend {
             SemanticTokenType::new("mcdplInstance"),
             SemanticTokenType::new("mcdplModelReference"),
             SemanticTokenType::new("mcdplResourceBinding"),
+            SemanticTokenType::new("mcdplDocumentKind"),
         ],
         token_modifiers: Vec::<SemanticTokenModifier>::new(),
     }
@@ -62,11 +64,15 @@ pub(crate) fn semantic_tokens(source: &str, symbols: Option<&DocumentSymbols>) -
     let mut data = Vec::new();
 
     for token in lex(source) {
-        let Some(token_type) = roles
+        let role_decision = roles
             .as_ref()
-            .and_then(|roles| roles.token_type(&token.text, token.kind, token.range))
-            .or_else(|| semantic_token_type(token.kind))
-        else {
+            .and_then(|roles| roles.token_type(&token.text, token.kind, token.range));
+        let token_type = match role_decision {
+            Some(RoleDecision::Token(token_type)) => Some(token_type),
+            Some(RoleDecision::Suppress) => None,
+            None => semantic_token_type(token.kind),
+        };
+        let Some(token_type) = token_type else {
             continue;
         };
 
@@ -99,6 +105,11 @@ pub(crate) fn semantic_tokens(source: &str, symbols: Option<&DocumentSymbols>) -
     }
 }
 
+enum RoleDecision {
+    Token(u32),
+    Suppress,
+}
+
 struct DocumentSemanticRoles<'a> {
     symbols: &'a DocumentSymbols,
     instance_scoped_references: Vec<InstanceScopedReference>,
@@ -112,37 +123,87 @@ impl<'a> DocumentSemanticRoles<'a> {
         }
     }
 
-    fn token_type(&self, text: &str, kind: TokenKind, range: TextRange) -> Option<u32> {
-        if self.is_resource_binding(range) {
-            return Some(TOKEN_TYPE_RESOURCE_BINDING);
+    fn token_type(&self, text: &str, kind: TokenKind, range: TextRange) -> Option<RoleDecision> {
+        if self.is_resource_path(kind, range) {
+            return Some(RoleDecision::Suppress);
+        }
+        if self.is_document_kind(text, kind, range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_DOCUMENT_KIND));
+        }
+        if self.is_resource_binding_prefix(kind, range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_RESOURCE_BINDING));
+        }
+        if self.is_instance_model_reference_name(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
         }
         if self.is_model_reference_name(range) {
-            return Some(TOKEN_TYPE_MODEL_REFERENCE);
+            return Some(RoleDecision::Token(TOKEN_TYPE_MODEL_REFERENCE));
         }
         if self.is_instance_name(text, kind, range) {
-            return Some(TOKEN_TYPE_INSTANCE);
+            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
         }
         if let Some(direction) = self.instance_scoped_variable_direction(range) {
-            return Some(match direction {
+            return Some(RoleDecision::Token(match direction {
                 PortDirection::Provided => TOKEN_TYPE_PROVIDED_VARIABLE,
                 PortDirection::Required => TOKEN_TYPE_REQUIRED_VARIABLE,
-            });
+            }));
         }
         if self.is_provided_variable(text, kind, range) {
-            return Some(TOKEN_TYPE_PROVIDED_VARIABLE);
+            return Some(RoleDecision::Token(TOKEN_TYPE_PROVIDED_VARIABLE));
         }
         if self.is_required_variable(text, kind, range) {
-            return Some(TOKEN_TYPE_REQUIRED_VARIABLE);
+            return Some(RoleDecision::Token(TOKEN_TYPE_REQUIRED_VARIABLE));
         }
 
         None
     }
 
-    fn is_resource_binding(&self, range: TextRange) -> bool {
-        self.symbols
-            .resource_bindings
-            .iter()
-            .any(|resource| contains_range(resource.declaration_range, range))
+    fn is_resource_path(&self, kind: TokenKind, range: TextRange) -> bool {
+        kind == TokenKind::String
+            && self
+                .symbols
+                .resource_bindings
+                .iter()
+                .any(|resource| contains_range(range, resource.path_range))
+    }
+
+    fn is_document_kind(&self, text: &str, kind: TokenKind, range: TextRange) -> bool {
+        matches!(kind, TokenKind::Ident | TokenKind::Keyword)
+            && matches!(text, "dp" | "mcdp")
+            && self.symbols.definition_range == range
+    }
+
+    fn is_resource_binding_prefix(&self, kind: TokenKind, range: TextRange) -> bool {
+        if matches!(
+            kind,
+            TokenKind::Whitespace
+                | TokenKind::Newline
+                | TokenKind::String
+                | TokenKind::Comment
+                | TokenKind::Number
+                | TokenKind::Unknown
+        ) {
+            return false;
+        }
+
+        self.symbols.resource_bindings.iter().any(|resource| {
+            let prefix_range =
+                TextRange::new(resource.declaration_range.start, resource.path_range.start);
+            contains_range(prefix_range, range)
+        })
+    }
+
+    fn is_instance_model_reference_name(&self, range: TextRange) -> bool {
+        self.symbols.instances.iter().any(|instance| {
+            instance
+                .model
+                .as_ref()
+                .is_some_and(|model| model.name_range == range)
+                || self.symbols.model_references.iter().any(|reference| {
+                    reference.name_range == range
+                        && contains_range(instance.declaration_range, reference.reference_range)
+                })
+        })
     }
 
     fn is_model_reference_name(&self, range: TextRange) -> bool {
@@ -222,7 +283,7 @@ mod tests {
 
         assert_eq!(options.range, Some(false));
         assert_eq!(options.full, Some(SemanticTokensFullOptions::Bool(true)));
-        assert_eq!(options.legend.token_types.len(), 11);
+        assert_eq!(options.legend.token_types.len(), 12);
         assert!(options.legend.token_modifiers.is_empty());
     }
 
@@ -274,6 +335,7 @@ mcdp {
 mcdp {
   provides number_t1 [car]
   requires total_cost [USD]
+  requires student_policy [`student_policy]
   sub dp_t1 = instance `fleet_type_1
   implemented-by yaml resource(\"fleet.yaml\")
   provided number_t1 <= number_t1 provided by dp_t1
@@ -284,6 +346,7 @@ mcdp {
         let symbols = DocumentSymbols::parse(uri, source);
         let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
 
+        assert!(tokens.contains(&absolute_token(source, "mcdp", TOKEN_TYPE_DOCUMENT_KIND)));
         assert!(tokens.contains(&absolute_token(
             source,
             "number_t1",
@@ -295,9 +358,11 @@ mcdp {
             TOKEN_TYPE_REQUIRED_VARIABLE
         )));
         assert!(tokens.contains(&absolute_token(source, "dp_t1", TOKEN_TYPE_INSTANCE)));
-        assert!(tokens.contains(&absolute_token(
+        assert!(tokens.contains(&absolute_token(source, "fleet_type_1", TOKEN_TYPE_INSTANCE)));
+        assert!(tokens.contains(&absolute_token_at_offset(
             source,
-            "fleet_type_1",
+            "student_policy",
+            offset_of(source, "`student_policy") + 1,
             TOKEN_TYPE_MODEL_REFERENCE
         )));
         assert!(tokens.contains(&absolute_token(
@@ -305,11 +370,12 @@ mcdp {
             "implemented",
             TOKEN_TYPE_RESOURCE_BINDING
         )));
-        assert!(tokens.contains(&absolute_token(
+        assert!(!tokens.contains(&absolute_token(
             source,
             "\"fleet.yaml\"",
             TOKEN_TYPE_RESOURCE_BINDING
         )));
+        assert!(!tokens.contains(&absolute_token(source, "\"fleet.yaml\"", TOKEN_TYPE_STRING)));
         assert!(
             tokens.contains(&absolute_token_at_offset(
                 source,
@@ -376,6 +442,39 @@ mcdp {
             provided_monitor_buses,
             TOKEN_TYPE_PROVIDED_VARIABLE
         )));
+    }
+
+    #[test]
+    fn instance_model_references_inside_instance_declarations_are_instance_colored() {
+        let source = "\
+mcdp {
+  provides f [Nat]
+  requires r [Nat]
+
+  sub n0 = instance `unit
+  sub n1 = instance `unit
+  sub n2 = instance `unit
+}
+";
+        let uri = test_file_url("/tmp/units.mcdp");
+        let symbols = DocumentSymbols::parse(uri, source);
+        let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
+        let mut search_start = 0;
+
+        for _ in 0..3 {
+            let unit_offset = search_start
+                + source[search_start..]
+                    .find("`unit")
+                    .expect("test source has instance unit reference")
+                + 1;
+            assert!(tokens.contains(&absolute_token_at_offset(
+                source,
+                "unit",
+                unit_offset,
+                TOKEN_TYPE_INSTANCE
+            )));
+            search_start = unit_offset + "unit".len();
+        }
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
