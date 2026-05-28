@@ -451,7 +451,7 @@ impl ProjectSymbolIndex {
                             "unit `{}` is not a known base unit or project poset",
                             atom.name
                         ),
-                        "Define a matching `.mcdp_poset` file or use a built-in unit/poset such as Nat, Bool, USD, kg, m, or s.",
+                        "Define a matching `.mcdp_poset` file or use a built-in unit/poset such as Nat, Bool, USD, kg, km, m, s, N, W, A, K, mol, or cd.",
                     )
                 };
                 diagnostics.push(ProjectDiagnostic {
@@ -942,6 +942,22 @@ const PRIMITIVE_POSETS: &[PrimitivePoset] = &[
         description: "Real numbers",
     },
     PrimitivePoset {
+        name: "A",
+        description: "amperes, electric current",
+    },
+    PrimitivePoset {
+        name: "K",
+        description: "kelvin, thermodynamic temperature",
+    },
+    PrimitivePoset {
+        name: "mol",
+        description: "moles, amount of substance",
+    },
+    PrimitivePoset {
+        name: "cd",
+        description: "candelas, luminous intensity",
+    },
+    PrimitivePoset {
         name: "N",
         description: "newtons, force",
     },
@@ -956,6 +972,78 @@ const PRIMITIVE_POSETS: &[PrimitivePoset] = &[
     PrimitivePoset {
         name: "W",
         description: "watts, power",
+    },
+    PrimitivePoset {
+        name: "Hz",
+        description: "hertz, frequency",
+    },
+    PrimitivePoset {
+        name: "Pa",
+        description: "pascals, pressure",
+    },
+    PrimitivePoset {
+        name: "C",
+        description: "coulombs, electric charge",
+    },
+    PrimitivePoset {
+        name: "V",
+        description: "volts, electric potential",
+    },
+    PrimitivePoset {
+        name: "F",
+        description: "farads, capacitance",
+    },
+    PrimitivePoset {
+        name: "Ω",
+        description: "ohms, electrical resistance",
+    },
+    PrimitivePoset {
+        name: "Ohm",
+        description: "ohms, electrical resistance",
+    },
+    PrimitivePoset {
+        name: "ohm",
+        description: "ohms, electrical resistance",
+    },
+    PrimitivePoset {
+        name: "S",
+        description: "siemens, electrical conductance",
+    },
+    PrimitivePoset {
+        name: "Wb",
+        description: "webers, magnetic flux",
+    },
+    PrimitivePoset {
+        name: "T",
+        description: "teslas, magnetic flux density",
+    },
+    PrimitivePoset {
+        name: "H",
+        description: "henries, inductance",
+    },
+    PrimitivePoset {
+        name: "lm",
+        description: "lumens, luminous flux",
+    },
+    PrimitivePoset {
+        name: "lx",
+        description: "lux, illuminance",
+    },
+    PrimitivePoset {
+        name: "Bq",
+        description: "becquerels, radioactivity",
+    },
+    PrimitivePoset {
+        name: "Gy",
+        description: "grays, absorbed dose",
+    },
+    PrimitivePoset {
+        name: "Sv",
+        description: "sieverts, equivalent dose",
+    },
+    PrimitivePoset {
+        name: "kat",
+        description: "katals, catalytic activity",
     },
     PrimitivePoset {
         name: "USD",
@@ -974,12 +1062,20 @@ const PRIMITIVE_POSETS: &[PrimitivePoset] = &[
         description: "meters, length",
     },
     PrimitivePoset {
+        name: "km",
+        description: "kilometers, length",
+    },
+    PrimitivePoset {
         name: "s",
         description: "seconds, time",
     },
     PrimitivePoset {
         name: "rad",
         description: "radians, angle",
+    },
+    PrimitivePoset {
+        name: "sr",
+        description: "steradians, solid angle",
     },
 ];
 
@@ -2171,12 +2267,13 @@ fn unit_base_and_exponent(token: &str) -> (String, i32) {
 fn dimension_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
     match atom.trim() {
         "$" => vec![("USD".to_owned(), 1)],
+        "km" => vec![("m".to_owned(), 1)],
         "N" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 1),
             ("s".to_owned(), -2),
         ],
-        "Nm" => vec![
+        "Nm" | "J" | "kJ" | "Wh" | "kWh" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 2),
             ("s".to_owned(), -2),
@@ -2186,11 +2283,58 @@ fn dimension_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
             ("m".to_owned(), 2),
             ("s".to_owned(), -3),
         ],
-        "J" | "kJ" | "Wh" | "kWh" => vec![
+        "Hz" | "Bq" => vec![("s".to_owned(), -1)],
+        "Pa" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), -1),
+            ("s".to_owned(), -2),
+        ],
+        "C" => vec![("A".to_owned(), 1), ("s".to_owned(), 1)],
+        "V" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -3),
+            ("A".to_owned(), -1),
+        ],
+        "F" => vec![
+            ("kg".to_owned(), -1),
+            ("m".to_owned(), -2),
+            ("s".to_owned(), 4),
+            ("A".to_owned(), 2),
+        ],
+        "Ω" | "Ohm" | "ohm" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -3),
+            ("A".to_owned(), -2),
+        ],
+        "S" => vec![
+            ("kg".to_owned(), -1),
+            ("m".to_owned(), -2),
+            ("s".to_owned(), 3),
+            ("A".to_owned(), 2),
+        ],
+        "Wb" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 2),
             ("s".to_owned(), -2),
+            ("A".to_owned(), -1),
         ],
+        "T" => vec![
+            ("kg".to_owned(), 1),
+            ("s".to_owned(), -2),
+            ("A".to_owned(), -1),
+        ],
+        "H" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -2),
+            ("A".to_owned(), -2),
+        ],
+        "lm" => vec![("cd".to_owned(), 1)],
+        "lx" => vec![("cd".to_owned(), 1), ("m".to_owned(), -2)],
+        "Gy" | "Sv" => vec![("m".to_owned(), 2), ("s".to_owned(), -2)],
+        "kat" => vec![("mol".to_owned(), 1), ("s".to_owned(), -1)],
         "g" | "mg" => vec![("kg".to_owned(), 1)],
         "deg" | "degree" | "degrees" | "°" => vec![("rad".to_owned(), 1)],
         "h" | "hr" | "hour" | "hours" | "min" | "minute" | "minutes" => {
@@ -2354,7 +2498,7 @@ fn consume_unit_atom(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>)
 }
 
 fn is_unit_atom_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic() || ch == '_'
+    ch.is_ascii_alphabetic() || matches!(ch, '_' | 'Ω')
 }
 
 fn is_unit_atom_continue(ch: char) -> bool {
@@ -2799,6 +2943,8 @@ mcdp {
 dp {
   provides count [Nat]
   requires energy [J]
+  requires distance [km]
+  requires voltage [V]
 }
 ";
         temp_dir.write("unit.mcdp", source);
@@ -2816,6 +2962,18 @@ dp {
             "missing J hover",
         );
         assert!(joule_hover.contents.contains("joule"));
+
+        let kilometer_hover = must_option(
+            index.hover_at(&uri, offset_of(source, "km")),
+            "missing km hover",
+        );
+        assert!(kilometer_hover.contents.contains("kilometer"));
+
+        let voltage_hover = must_option(
+            index.hover_at(&uri, offset_of(source, "V")),
+            "missing V hover",
+        );
+        assert!(voltage_hover.contents.contains("volt"));
     }
 
     #[test]
@@ -2849,6 +3007,67 @@ mcdp {
             !diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("kg"))
+        );
+    }
+
+    #[test]
+    fn accepts_si_units_and_kilometers_as_builtins() {
+        let temp_dir = TempDir::new("si-units");
+        let source = "\
+dp {
+  provides distance [km]
+  provides current [A]
+  provides temperature [K]
+  provides amount [mol]
+  provides intensity [cd]
+  requires frequency [Hz]
+  requires pressure [Pa]
+  requires charge [C]
+  requires voltage [V]
+  requires capacitance [F]
+  requires resistance [Ohm]
+  requires conductance [S]
+  requires flux [Wb]
+  requires flux_density [T]
+  requires inductance [H]
+  requires luminous_flux [lm]
+  requires illuminance [lx]
+  requires activity [Bq]
+  requires absorbed_dose [Gy]
+  requires equivalent_dose [Sv]
+  requires catalysis [kat]
+  requires solid_angle [sr]
+}
+";
+        temp_dir.write("si.mcdp", source);
+        let uri = temp_dir.url("si.mcdp");
+        let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
+
+        let diagnostics = index.semantic_diagnostics(&uri);
+
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "lsp.undefined-unit"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn unit_atoms_handle_ohm_symbol_without_swallowing_superscripts() {
+        assert_eq!(
+            unit_atoms("Ω")
+                .into_iter()
+                .map(|atom| atom.name)
+                .collect::<Vec<_>>(),
+            vec!["Ω"]
+        );
+        assert_eq!(
+            unit_atoms("m²")
+                .into_iter()
+                .map(|atom| atom.name)
+                .collect::<Vec<_>>(),
+            vec!["m"]
         );
     }
 
@@ -2978,6 +3197,38 @@ mcdp {
 ";
         temp_dir.write("mechanics.mcdp", source);
         let uri = temp_dir.url("mechanics.mcdp");
+        let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
+
+        let diagnostics = index.semantic_diagnostics(&uri);
+
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "lsp.unit-mismatch"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn does_not_flag_si_derived_unit_equivalences() {
+        let temp_dir = TempDir::new("si-derived-equivalence");
+        let source = "\
+mcdp {
+  provides force [N]
+  provides distance [km]
+  provides duration [s]
+  provides current [A]
+  requires energy [J]
+  requires power [W]
+  requires voltage [V]
+
+  required energy >= provided force * provided distance
+  required power >= provided force * provided distance / provided duration
+  required voltage >= required power / provided current
+}
+";
+        temp_dir.write("si_equivalence.mcdp", source);
+        let uri = temp_dir.url("si_equivalence.mcdp");
         let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
 
         let diagnostics = index.semantic_diagnostics(&uri);

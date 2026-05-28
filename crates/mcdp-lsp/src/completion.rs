@@ -680,9 +680,21 @@ mod tests {
         assert!(labels.contains(&"J"));
         assert!(labels.contains(&"Nm"));
         assert!(labels.contains(&"N"));
+        assert!(labels.contains(&"km"));
+        assert!(labels.contains(&"A"));
+        assert!(labels.contains(&"K"));
+        assert!(labels.contains(&"mol"));
+        assert!(labels.contains(&"cd"));
+        assert!(labels.contains(&"Hz"));
+        assert!(labels.contains(&"Pa"));
+        assert!(labels.contains(&"V"));
         assert_eq!(
             item_by_label(&items, "Nat").detail.as_deref(),
             Some("Primitive poset: Natural numbers")
+        );
+        assert_eq!(
+            item_by_label(&items, "km").detail.as_deref(),
+            Some("Primitive poset: kilometers, length")
         );
         assert_eq!(
             item_by_label(&items, "Nat").insert_text.as_deref(),
