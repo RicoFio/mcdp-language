@@ -117,17 +117,74 @@ fn label_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
 fn dimension_unit_atom_factors(atom: &str) -> Vec<(String, i32)> {
     match atom.trim() {
         "$" => vec![("USD".to_owned(), 1)],
+        "km" => vec![("m".to_owned(), 1)],
         "N" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 1),
             ("s".to_owned(), -2),
         ],
-        "Nm" => vec![
+        "Nm" | "J" | "kJ" | "Wh" | "kWh" => vec![
             ("kg".to_owned(), 1),
             ("m".to_owned(), 2),
             ("s".to_owned(), -2),
         ],
-        "J" | "kJ" | "Wh" | "kWh" => vec![("W".to_owned(), 1), ("s".to_owned(), 1)],
+        "W" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -3),
+        ],
+        "Hz" | "Bq" => vec![("s".to_owned(), -1)],
+        "Pa" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), -1),
+            ("s".to_owned(), -2),
+        ],
+        "C" => vec![("A".to_owned(), 1), ("s".to_owned(), 1)],
+        "V" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -3),
+            ("A".to_owned(), -1),
+        ],
+        "F" => vec![
+            ("kg".to_owned(), -1),
+            ("m".to_owned(), -2),
+            ("s".to_owned(), 4),
+            ("A".to_owned(), 2),
+        ],
+        "Ω" | "Ohm" | "ohm" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -3),
+            ("A".to_owned(), -2),
+        ],
+        "S" => vec![
+            ("kg".to_owned(), -1),
+            ("m".to_owned(), -2),
+            ("s".to_owned(), 3),
+            ("A".to_owned(), 2),
+        ],
+        "Wb" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -2),
+            ("A".to_owned(), -1),
+        ],
+        "T" => vec![
+            ("kg".to_owned(), 1),
+            ("s".to_owned(), -2),
+            ("A".to_owned(), -1),
+        ],
+        "H" => vec![
+            ("kg".to_owned(), 1),
+            ("m".to_owned(), 2),
+            ("s".to_owned(), -2),
+            ("A".to_owned(), -2),
+        ],
+        "lm" => vec![("cd".to_owned(), 1)],
+        "lx" => vec![("cd".to_owned(), 1), ("m".to_owned(), -2)],
+        "Gy" | "Sv" => vec![("m".to_owned(), 2), ("s".to_owned(), -2)],
+        "kat" => vec![("mol".to_owned(), 1), ("s".to_owned(), -1)],
         "g" | "mg" => vec![("kg".to_owned(), 1)],
         "deg" | "degree" | "degrees" | "°" => vec![("rad".to_owned(), 1)],
         "h" | "hr" | "hour" | "hours" | "min" | "minute" | "minutes" => {
@@ -237,9 +294,34 @@ mod tests {
     fn equates_scaled_unit_dimensions_without_relabeling() {
         assert_eq!(canonical_unit_label("deg"), Some("deg".to_owned()));
         assert_eq!(canonical_unit_label("g"), Some("g".to_owned()));
+        assert_eq!(canonical_unit_label("km"), Some("km".to_owned()));
         assert!(units_equivalent(Some("deg"), Some("rad")));
         assert!(units_equivalent(Some("Wh"), Some("J")));
         assert!(units_equivalent(Some("g"), Some("kg")));
+        assert!(units_equivalent(Some("km"), Some("m")));
         assert!(units_equivalent(Some("min"), Some("s")));
+    }
+
+    #[test]
+    fn equates_si_derived_unit_dimensions() {
+        assert!(units_equivalent(Some("N"), Some("kg*m/s^2")));
+        assert!(units_equivalent(Some("Nm"), Some("J")));
+        assert!(units_equivalent(Some("W"), Some("J/s")));
+        assert!(units_equivalent(Some("Hz"), Some("1/s")));
+        assert!(units_equivalent(Some("Pa"), Some("N/m^2")));
+        assert!(units_equivalent(Some("C"), Some("A*s")));
+        assert!(units_equivalent(Some("V"), Some("W/A")));
+        assert!(units_equivalent(Some("F"), Some("C/V")));
+        assert!(units_equivalent(Some("Ω"), Some("V/A")));
+        assert!(units_equivalent(Some("Ohm"), Some("Ω")));
+        assert!(units_equivalent(Some("S"), Some("A/V")));
+        assert!(units_equivalent(Some("Wb"), Some("V*s")));
+        assert!(units_equivalent(Some("T"), Some("Wb/m^2")));
+        assert!(units_equivalent(Some("H"), Some("Wb/A")));
+        assert!(units_equivalent(Some("lx"), Some("lm/m^2")));
+        assert!(units_equivalent(Some("Bq"), Some("1/s")));
+        assert!(units_equivalent(Some("Gy"), Some("J/kg")));
+        assert!(units_equivalent(Some("Sv"), Some("J/kg")));
+        assert!(units_equivalent(Some("kat"), Some("mol/s")));
     }
 }
