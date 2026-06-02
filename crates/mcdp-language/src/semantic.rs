@@ -989,6 +989,30 @@ mcdp {
     }
 
     #[test]
+    fn adapts_language_semantic_model_to_core_graph() {
+        let source = SourceId::new("rover.mcdp");
+        let parsed = parse_document(
+            source.clone(),
+            "\
+mcdp {
+  provides speed [m/s]
+  total = 10 m/s
+}
+",
+        );
+
+        let (model, diagnostics) = lower_document(source, &parsed);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let model = model.expect("semantic model should lower");
+        let graph = graph_from_semantic(Some("rover".to_owned()), &model);
+
+        assert_eq!(graph.name.as_deref(), Some("rover"));
+        assert_eq!(graph.ports.len(), 1);
+        assert_eq!(graph.ports[0].direction, PortDirection::Provides);
+        assert_eq!(graph.constraints.len(), 1);
+    }
+
+    #[test]
     fn lowers_choose_entries() {
         let source = SourceId::new("Batteries.mcdp");
         let parsed = parse_document(
