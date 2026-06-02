@@ -1,5 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const childProcess = require("child_process");
+
+const { checkVersions, expectedServerVersion } = require("./sync-version");
 
 const extensionRoot = path.resolve(__dirname, "..");
 const workspaceRoot = path.resolve(extensionRoot, "..", "..");
@@ -24,6 +27,9 @@ requireEqual("package name", pkg.name, "mcdpl-vscode");
 requireEqual("publisher", pkg.publisher, "ZardiniLab");
 requireEqual("display name", pkg.displayName, "MCDPL Co-Design Tools");
 requireEqual("language id", pkg.contributes?.languages?.[0]?.id, "mcdpl");
+for (const mismatch of checkVersions()) {
+    errors.push(mismatch);
+}
 
 requireFile("extension entrypoint", pkg.main);
 requireFile("extension icon", pkg.icon);
@@ -45,10 +51,23 @@ if (process.env.MCDPL_REQUIRE_PACKAGED_LICENSE === "1" && !fs.existsSync(localLi
 const serverTarget = process.env.MCDPL_SERVER_TARGET;
 if (serverTarget) {
     const binaryName = serverTarget.startsWith("win32") ? "mcdp-lsp.exe" : "mcdp-lsp";
+    const relativeServerPath = path.join("server", serverTarget, binaryName);
+    const serverPath = path.join(extensionRoot, relativeServerPath);
     requireFile(
         `${serverTarget} bundled language server`,
-        path.join("server", serverTarget, binaryName),
+        relativeServerPath,
     );
+    if (fs.existsSync(serverPath)) {
+        const actualVersion = childProcess.execFileSync(serverPath, ["--version"], {
+            encoding: "utf8",
+        }).trim();
+        const expectedVersion = expectedServerVersion();
+        if (actualVersion !== expectedVersion) {
+            errors.push(
+                `${serverTarget} bundled language server version must be ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(actualVersion)}`,
+            );
+        }
+    }
 }
 
 if (errors.length > 0) {
