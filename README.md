@@ -29,6 +29,54 @@ npm install
 
 Then open `editors/vscode-mcdpl` in VSCode and run the extension development host.
 
+## Versioning and Releases
+
+Versioning for the language crate, the `mcdp-lsp` binary, and editor packages are controlled through the Rust workspace version in the `Cargo.toml`. To prepare a new release, bump the root `[workspace.package]` version with `just`:
+
+```sh
+just bump-version patch   # 0.1.0 -> 0.1.1
+just bump-version minor   # 0.1.0 -> 0.2.0
+just bump-version major   # 0.1.0 -> 1.0.0
+```
+
+To set an exact version instead, run:
+
+```sh
+just set-version 0.2.0
+```
+
+Both recipes update `Cargo.toml`, refresh Cargo metadata, and synchronize
+`editors/vscode-mcdpl/package.json` plus the root package entries in
+`editors/vscode-mcdpl/package-lock.json`.
+
+The LSP reports the same version in the LSP initialize handshake and on the
+command line:
+
+```sh
+cargo run -p mcdp-lsp -- --version
+```
+
+Before tagging, run the release check:
+
+```sh
+just release-check
+```
+
+Commit the Cargo and editor version updates, then create and push a matching
+tag:
+
+```sh
+version="$(just version)"
+git tag "v${version}"
+git push origin main "v${version}"
+```
+
+Pull requests and pushes to `main` run validation. Pushing a `vX.Y.Z` tag also
+starts the VSCode publish job. GitHub Actions builds the release `mcdp-lsp`
+binary for each supported platform, bundles it into the corresponding VSIX,
+verifies the bundled server's `--version` output matches the Cargo version, and
+publishes the extension version to the marketplace.
+
 ## Importing mcdp-language as crate
 
 To use MCDPL language primitives in another Rust codebase, depend on the
