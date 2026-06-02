@@ -21,6 +21,14 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+#[derive(Debug, PartialEq, Eq)]
+enum StartupMode {
+    Server,
+    Version,
+    Help,
+    Error(String),
+}
+
 #[derive(Debug)]
 struct Backend {
     client: Client,
@@ -298,6 +306,29 @@ impl LanguageServer for Backend {
     }
 }
 
+fn startup_mode(args: &[String]) -> StartupMode {
+    let Some(arg) = args.first() else {
+        return StartupMode::Server;
+    };
+    if args.len() > 1 {
+        return StartupMode::Error("error: expected at most one argument".to_owned());
+    }
+
+    match arg.as_str() {
+        "--version" | "-V" => StartupMode::Version,
+        "--help" | "-h" => StartupMode::Help,
+        other => StartupMode::Error(format!("error: unknown argument `{other}`")),
+    }
+}
+
+fn version_text() -> String {
+    format!("mcdp-lsp {}", env!("CARGO_PKG_VERSION"))
+}
+
+fn help_text() -> &'static str {
+    "Usage: mcdp-lsp [--version]\n\nOptions:\n  -V, --version  Print version and exit\n  -h, --help     Print help and exit\n"
+}
+
 fn location_for(
     index: &project_symbols::ProjectSymbolIndex,
     uri: Url,
@@ -327,9 +358,69 @@ fn document_highlight_for(
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match startup_mode(&args) {
+        StartupMode::Server => {}
+        StartupMode::Version => {
+            println!("{}", version_text());
+            return;
+        }
+        StartupMode::Help => {
+            print!("{}", help_text());
+            return;
+        }
+        StartupMode::Error(message) => {
+            eprintln!("{message}");
+            eprint!("{}", help_text());
+            std::process::exit(2);
+        }
+    }
+
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let (service, socket) = LspService::new(Backend::new);
 
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StartupMode, startup_mode, version_text};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn starts_server_without_arguments() {
+        assert_eq!(startup_mode(&[]), StartupMode::Server);
+    }
+
+    #[test]
+    fn recognizes_version_flags() {
+        assert_eq!(startup_mode(&args(&["--version"])), StartupMode::Version);
+        assert_eq!(startup_mode(&args(&["-V"])), StartupMode::Version);
+        assert_eq!(
+            version_text(),
+            format!("mcdp-lsp {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn recognizes_help_flags() {
+        assert_eq!(startup_mode(&args(&["--help"])), StartupMode::Help);
+        assert_eq!(startup_mode(&args(&["-h"])), StartupMode::Help);
+    }
+
+    #[test]
+    fn rejects_unknown_or_extra_arguments() {
+        assert_eq!(
+            startup_mode(&args(&["--bogus"])),
+            StartupMode::Error("error: unknown argument `--bogus`".to_owned())
+        );
+        assert_eq!(
+            startup_mode(&args(&["--version", "--help"])),
+            StartupMode::Error("error: expected at most one argument".to_owned())
+        );
+    }
 }
