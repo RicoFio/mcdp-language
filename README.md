@@ -1,8 +1,8 @@
-# MCDPL Language Tooling
+# Monotone Co-Design Problem Language Tooling
 
 This is a Rust workspace to centralize the Monotone Co-Design Problem Language (MCDPL) 
-specification, a stdio Language Server Protocol (LSP), and various
-Integrated Development Environment (IDE) editor clients (currently just VSCode).
+specifications, a stdio Language Server Protocol (LSP), and an
+Integrated Development Environment (IDE) editor client (currently just VSCode).
 
 ## Layout
 
