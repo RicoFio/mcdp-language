@@ -1,12 +1,13 @@
 # MCDPL Language Tooling
 
-Standalone workspace for the open-source MCDPL language front end, stdio
-language server, and editor clients.
+This is a Rust workspace to centralize the Monotone Co-Design Problem Language (MCDPL) 
+specification, a stdio Language Server Protocol (LSP), and various
+Integrated Development Environment (IDE) editor clients (currently just VSCode).
 
 ## Layout
 
-- `crates/mcdp-language`: shared syntax, diagnostics, source spans, semantic
-  helper types, and unit/front-end APIs.
+- `crates/mcdp-language`: Shared syntax, diagnostics, source spans, semantic
+  helper types, and interfaces.
 - `crates/mcdp-lsp`: Rust `tower-lsp` server.
 - `editors/vscode-mcdpl`: VSCode development client.
 
@@ -27,7 +28,7 @@ cd editors/vscode-mcdpl
 npm install
 ```
 
-Then open `editors/vscode-mcdpl` in VSCode and run the extension development host.
+Then open `editors/vscode-mcdpl` in VSCode and run the extension development host. 
 
 ## Versioning and Releases
 
@@ -77,58 +78,53 @@ binary for each supported platform, bundles it into the corresponding VSIX,
 verifies the bundled server's `--version` output matches the Cargo version, and
 publishes the extension version to the marketplace.
 
-## Importing mcdp-language as crate
+## Importing `mcdp-language` as a Rust crate
 
-To use MCDPL language primitives in another Rust codebase, depend on the
-package as `mcdp-language` in `Cargo.toml`. In Rust source code the crate is
-imported as `mcdp_language`.
+To use MCDPL primitives in another Rust codebase, you can set this package 
+as a dependency, i.e. include `mcdp-language` in `Cargo.toml`. 
+In Rust, you can then import this crate as `mcdp_language`.
 
 For a workspace, put the dependency in the root `Cargo.toml`:
 
 ```toml
 [workspace.dependencies]
-mcdp-language = { git = "https://github.com/RicoFio/mcdp-language", package = "mcdp-language" }
+mcdp-language = { git = "https://github.com/mit-zardini-lab/mcdp-language", package = "mcdp-language" }
 ```
 
-Then opt into it from each member crate that needs the front-end APIs:
+Then opt into it from each member crate that needs the API:
 
 ```toml
 [dependencies]
 mcdp-language.workspace = true
 ```
 
-While developing this repository and a downstream workspace side by side, add a
+If you are developing this repository and a downstream workspace side by side, add a
 patch in the downstream workspace root so Cargo uses the local checkout instead
 of the locked Git revision:
 
 ```toml
-[patch."https://github.com/RicoFio/mcdp-language"]
+[patch."https://github.com/mit-zardini-lab/mcdp-language"]
 mcdp-language = { path = "../mcdp-language/crates/mcdp-language" }
 ```
-
-This is the pattern used from the `codesign` workspace: the dependency remains a
-Git dependency for normal builds, while local development resolves to
-`../mcdp-language/crates/mcdp-language`. The `Cargo.lock` entry still appears as
-`mcdp-language 0.1.0`; the patch changes where Cargo gets that package from.
 
 For a single non-workspace crate, put the Git dependency directly under
 `[dependencies]`:
 
 ```toml
 [dependencies]
-mcdp-language = { git = "https://github.com/RicoFio/mcdp-language", package = "mcdp-language" }
+mcdp-language = { git = "https://github.com/mit-zardini-lab/mcdp-language", package = "mcdp-language" }
 ```
 
 ## Rust API Usage
 
-The crate exposes the shared MCDPL language front end used by compiler and
+The crate exposes the shared MCDPL interfaces used by compiler and
 editor tooling:
 
 - `lex` and `parse_document` for tokenization and document-shape recovery.
-- `lower_document` for source-preserving semantic declarations.
-- `graph_from_semantic` for a lightweight `DesignGraph` shell.
+- `lower_document` for semantic declarations.
+- `graph_from_semantic` for a lightweight `DesignGraph` that can be used for a potential front-end.
 - `parse_expression_text`, `parse_expression_list_text`, and
-  `parse_unit_expression_text` for standalone expression/unit parsing.
+  `parse_unit_expression_text` for expression/unit parsing.
 - `canonical_unit_label`, `canonical_unit_option`, `normalize_unit_text`, and
   `units_equivalent` for unit-label normalization and equivalence checks.
 - Shared data types such as `SourceId`, `TextRange`, `TextSpan`, `Diagnostic`,
@@ -169,7 +165,7 @@ mcdp {
         return;
     }
 
-    let model = model.expect("a valid document lowers to a semantic model");
+    let model = model.expect("a valid MCDPL YAML document lowers to a semantic model");
     let graph = graph_from_semantic(Some("rover".to_owned()), &model);
 
     println!(
