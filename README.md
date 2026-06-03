@@ -71,11 +71,13 @@ git tag "v${version}"
 git push origin main "v${version}"
 ```
 
-Pull requests and pushes to `main` run validation. Pushing a `vX.Y.Z` tag also
-starts the VSCode publish job. GitHub Actions builds the release `mcdp-lsp`
-binary for each supported platform, bundles it into the corresponding VSIX,
-verifies the bundled server's `--version` output matches the Cargo version, and
-publishes the extension version to the marketplace.
+Opening a pull request, pushing commits to an open pull request, and pushing to
+`main` all run the validation job: Rust formatting, workspace checks, tests,
+Clippy, VSCode extension checks, and extension preflight. Pushing a `vX.Y.Z` tag
+also starts the VSCode publish job. GitHub Actions builds the release
+`mcdp-lsp` binary for each supported platform, bundles it into the corresponding
+VSIX, verifies the bundled server's `--version` output matches the Cargo
+version, and publishes the extension version to the marketplace.
 
 ## Importing mcdp-language as crate
 
