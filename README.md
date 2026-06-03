@@ -1,8 +1,18 @@
-# MCDPL Language Tooling
+<span>
+  <img
+    src="https://zardinilab.gallerycdn.vsassets.io/extensions/zardinilab/mcdpl-vscode/0.1.10/1780368218537/Microsoft.VisualStudio.Services.Icons.Default"
+    alt="MCDPL VS Code extension icon"
+    height=200px
+  />
+</span>
+
+# Monotone Co-Design Problem Language Tooling
+
+[![Get on VS Marketplace](https://img.shields.io/badge/Get%20on-VS%20Marketplace-blue?style=for-the-badge&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=ZardiniLab.mcdpl-vscode)
 
 This is a Rust workspace to centralize the Monotone Co-Design Problem Language (MCDPL) 
-specification, a stdio Language Server Protocol (LSP), and various
-Integrated Development Environment (IDE) editor clients (currently just VSCode).
+specifications, a stdio Language Server Protocol (LSP), and an
+Integrated Development Environment (IDE) editor client (currently just VSCode).
 
 ## Layout
 
@@ -207,3 +217,70 @@ let unit = parse_unit_expression_text("m/s^2");
 assert_eq!(canonical_unit_label("dimensionless"), None);
 assert!(units_equivalent(Some("m / s^2"), Some("m/s^2")));
 ```
+
+## Local Development
+
+Run the workspace checks from this repository root:
+
+```sh
+cargo check --workspace --all-targets
+cargo test --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+For VSCode testing, install the extension dependency once:
+
+```sh
+cd editors/vscode-mcdpl
+npm install
+```
+
+Then open `editors/vscode-mcdpl` in VSCode and run the extension development host. 
+
+### Versioning and Releases
+
+Versioning for the language crate, the `mcdp-lsp` binary, and editor packages are controlled through the Rust workspace version in the `Cargo.toml`. To prepare a new release, bump the root `[workspace.package]` version with `just`:
+
+```sh
+just bump-version patch   # 0.1.0 -> 0.1.1
+just bump-version minor   # 0.1.0 -> 0.2.0
+just bump-version major   # 0.1.0 -> 1.0.0
+```
+
+To set an exact version instead, run:
+
+```sh
+just set-version 0.2.0
+```
+
+Both recipes update `Cargo.toml`, refresh Cargo metadata, and synchronize
+`editors/vscode-mcdpl/package.json` plus the root package entries in
+`editors/vscode-mcdpl/package-lock.json`.
+
+The LSP reports the same version in the LSP initialize handshake and on the
+command line:
+
+```sh
+cargo run -p mcdp-lsp -- --version
+```
+
+Before tagging, run the release check:
+
+```sh
+just release-check
+```
+
+Commit the Cargo and editor version updates, then create and push a matching
+tag:
+
+```sh
+version="$(just version)"
+git tag "v${version}"
+git push origin main "v${version}"
+```
+
+Pull requests and pushes to `main` run validation. Pushing a `vX.Y.Z` tag also
+starts the VSCode publish job. GitHub Actions builds the release `mcdp-lsp`
+binary for each supported platform, bundles it into the corresponding VSIX,
+verifies the bundled server's `--version` output matches the Cargo version, and
+publishes the extension version to the marketplace.
