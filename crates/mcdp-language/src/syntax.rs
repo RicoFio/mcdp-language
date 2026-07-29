@@ -89,6 +89,9 @@ pub struct SyntaxDocument {
     pub range: TextRange,
     /// Top-level body recovered for this document.
     pub body: SyntaxBody,
+    /// Import statements that appear before the document-kind keyword,
+    /// for example `from library batteries import interface Battery`.
+    pub leading_imports: Vec<Statement>,
 }
 
 /// Top-level body shape.
@@ -201,7 +204,8 @@ impl ParsedDocument {
 #[must_use]
 pub fn parse_document(source_id: SourceId, source: &str) -> ParsedDocument {
     let tokens = lex(source);
-    let kind = detect_document_kind(&tokens);
+    let located = locate_document_kind(&tokens);
+    let kind = located.map(|(_, document_kind)| document_kind);
     let mut diagnostics = Vec::new();
     check_balanced_delimiters(&source_id, &tokens, &mut diagnostics);
 
@@ -221,8 +225,18 @@ pub fn parse_document(source_id: SourceId, source: &str) -> ParsedDocument {
         diagnostics.push(diagnostic);
     }
 
-    let syntax = kind.map(|document_kind| {
-        parse_syntax_document(&source_id, &tokens, document_kind, &mut diagnostics)
+    let syntax = located.map(|(first_index, document_kind)| {
+        let leading_imports =
+            split_statements(&source_id, &tokens, 0, first_index, &mut diagnostics);
+        let mut syntax_document = parse_syntax_document(
+            &source_id,
+            &tokens,
+            document_kind,
+            first_index,
+            &mut diagnostics,
+        );
+        syntax_document.leading_imports = leading_imports;
+        syntax_document
     });
 
     ParsedDocument {
@@ -323,29 +337,47 @@ fn consume_string(
     }
 }
 
-fn detect_document_kind(tokens: &[Token]) -> Option<DocumentKind> {
-    let first = tokens.iter().find(|token| !is_trivia(token.kind))?;
-    match first.text.as_str() {
-        "mcdp" => Some(DocumentKind::Mcdp),
-        "dp" => Some(DocumentKind::Dp),
-        "catalog" => Some(DocumentKind::Catalog),
-        "choose" => Some(DocumentKind::Choose),
-        "intersection" => Some(DocumentKind::Intersection),
-        "interface" => Some(DocumentKind::Interface),
-        "poset" => Some(DocumentKind::Poset),
-        "template" => Some(DocumentKind::Template),
-        "specialize" => Some(DocumentKind::Specialize),
-        _ => None,
+/// Finds the index and kind of the top-level document keyword, skipping any
+/// leading `from ... import ...` / `import ...` statements that may appear
+/// before it (for example library imports at the top of a `.mcdp_template`
+/// file).
+fn locate_document_kind(tokens: &[Token]) -> Option<(usize, DocumentKind)> {
+    let mut index = 0;
+    while index < tokens.len() {
+        while index < tokens.len() && is_trivia(tokens[index].kind) {
+            index += 1;
+        }
+        let token = tokens.get(index)?;
+        if token.text == "from" || token.text == "import" {
+            while index < tokens.len() && tokens[index].kind != TokenKind::Newline {
+                index += 1;
+            }
+            continue;
+        }
+        let kind = match token.text.as_str() {
+            "mcdp" => DocumentKind::Mcdp,
+            "dp" => DocumentKind::Dp,
+            "catalog" => DocumentKind::Catalog,
+            "choose" => DocumentKind::Choose,
+            "intersection" => DocumentKind::Intersection,
+            "interface" => DocumentKind::Interface,
+            "poset" => DocumentKind::Poset,
+            "template" => DocumentKind::Template,
+            "specialize" => DocumentKind::Specialize,
+            _ => return None,
+        };
+        return Some((index, kind));
     }
+    None
 }
 
 fn parse_syntax_document(
     source_id: &SourceId,
     tokens: &[Token],
     kind: DocumentKind,
+    first_index: usize,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> SyntaxDocument {
-    let first_index = first_non_trivia_index(tokens).unwrap_or(0);
     let range = document_range(tokens, first_index);
     let body = match kind {
         DocumentKind::Mcdp
@@ -362,7 +394,12 @@ fn parse_syntax_document(
         }
     };
 
-    SyntaxDocument { kind, range, body }
+    SyntaxDocument {
+        kind,
+        range,
+        body,
+        leading_imports: Vec::new(),
+    }
 }
 
 fn parse_braced_body(
@@ -491,10 +528,6 @@ fn document_range(tokens: &[Token], first_index: usize) -> TextRange {
         .find(|token| !is_trivia(token.kind))
         .map_or(start, |token| token.range.end);
     TextRange::new(start, end)
-}
-
-fn first_non_trivia_index(tokens: &[Token]) -> Option<usize> {
-    tokens.iter().position(|token| !is_trivia(token.kind))
 }
 
 fn find_next_text(tokens: &[Token], start: usize, text: &str) -> Option<usize> {
@@ -920,6 +953,55 @@ mod tests {
                 .as_ref()
                 .map(|syntax| syntax.body.statements().len()),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn detects_template_document_with_leading_imports() {
+        let parsed = parse_document(
+            SourceId::new("ActuationEnergeticsTemplate.mcdp_template"),
+            "\
+from library batteries_uncertain1 import interface BatteryInterface
+from library actuations_v2 import interface ActuationInterface
+
+template [
+  Battery: BatteryInterface,
+  Actuation: ActuationInterface
+] mcdp {
+  provides endurance [s]
+
+  battery = instance Battery
+  actuation = instance Actuation
+}
+",
+        );
+
+        assert!(!parsed.has_errors());
+        assert_eq!(parsed.kind, Some(DocumentKind::Template));
+
+        let syntax = parsed.syntax.as_ref().expect("syntax document");
+        assert_eq!(
+            syntax
+                .leading_imports
+                .iter()
+                .map(|statement| statement.kind)
+                .collect::<Vec<_>>(),
+            vec![StatementKind::Import, StatementKind::Import]
+        );
+
+        let kinds = syntax
+            .body
+            .statements()
+            .iter()
+            .map(|statement| statement.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                StatementKind::Provides,
+                StatementKind::Instance,
+                StatementKind::Instance,
+            ]
         );
     }
 

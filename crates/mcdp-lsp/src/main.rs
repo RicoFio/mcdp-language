@@ -317,6 +317,9 @@ fn startup_mode(args: &[String]) -> StartupMode {
     match arg.as_str() {
         "--version" | "-V" => StartupMode::Version,
         "--help" | "-h" => StartupMode::Help,
+        // LSP clients (e.g. vscode-languageclient) pass `--stdio` to indicate
+        // stdio transport. We only support stdio, so treat it as a no-op.
+        "--stdio" => StartupMode::Server,
         other => StartupMode::Error(format!("error: unknown argument `{other}`")),
     }
 }
@@ -410,6 +413,11 @@ mod tests {
     fn recognizes_help_flags() {
         assert_eq!(startup_mode(&args(&["--help"])), StartupMode::Help);
         assert_eq!(startup_mode(&args(&["-h"])), StartupMode::Help);
+    }
+
+    #[test]
+    fn accepts_stdio_flag() {
+        assert_eq!(startup_mode(&args(&["--stdio"])), StartupMode::Server);
     }
 
     #[test]

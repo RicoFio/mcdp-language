@@ -13,6 +13,7 @@ let client;
 function activate(context) {
     const outputChannel = vscode.window.createOutputChannel(
         "MCDPL Language Server",
+        { log: true },
     );
     context.subscriptions.push(outputChannel);
 

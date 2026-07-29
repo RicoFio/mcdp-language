@@ -226,6 +226,8 @@ pub fn lower_document(
     let mut model = SemanticModel::new(source.clone(), kind);
     let mut diagnostics = Vec::new();
 
+    lower_statements(&source, &syntax.leading_imports, &mut model, &mut diagnostics);
+
     match &syntax.body {
         SyntaxBody::Braced { statements } => {
             lower_statements(&source, statements, &mut model, &mut diagnostics);
@@ -838,7 +840,7 @@ fn parse_import_decl(text: &str) -> Option<Vec<String>> {
     let imported = text[import_index + "import".len()..].replace(',', " ");
     let models: Vec<String> = imported
         .split_whitespace()
-        .filter(|part| !matches!(*part, "model" | "models"))
+        .filter(|part| !matches!(*part, "model" | "models" | "interface" | "interfaces"))
         .map(|part| part.trim_start_matches('`').to_owned())
         .filter(|part| !part.is_empty())
         .collect();
@@ -986,6 +988,41 @@ mcdp {
         assert_eq!(graph.ports.len(), 2);
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.constraints.len(), 2);
+    }
+
+    #[test]
+    fn lowers_template_with_leading_imports_and_instances() {
+        let source = SourceId::new("ActuationEnergeticsTemplate.mcdp_template");
+        let parsed = parse_document(
+            source.clone(),
+            "\
+from library batteries_uncertain1 import interface BatteryInterface
+from library actuations_v2 import interface ActuationInterface
+
+template [
+  Battery: BatteryInterface,
+  Actuation: ActuationInterface
+] mcdp {
+  provides endurance [s]
+
+  battery = instance Battery
+  actuation = instance Actuation
+}
+",
+        );
+
+        let (model, diagnostics) = lower_document(source, &parsed);
+        let model = model.expect("document should lower");
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(model.imports.len(), 2);
+        assert_eq!(model.imports[0].models, vec!["BatteryInterface"]);
+        assert_eq!(model.imports[1].models, vec!["ActuationInterface"]);
+        assert_eq!(model.instances.len(), 2);
+        assert_eq!(model.instances[0].name, "battery");
+        assert_eq!(model.instances[0].model, "Battery");
+        assert_eq!(model.instances[1].name, "actuation");
+        assert_eq!(model.instances[1].model, "Actuation");
     }
 
     #[test]
