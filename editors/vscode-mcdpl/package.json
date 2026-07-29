@@ -83,6 +83,12 @@
           },
           "mcdplDocumentKind:mcdpl": {
             "foreground": "#A855F7"
+          },
+          "mcdplTemplateReference:mcdpl": {
+            "foreground": "#0EA5E9"
+          },
+          "mcdplLibrary:mcdpl": {
+            "foreground": "#166534"
           }
         }
       }
@@ -117,6 +123,16 @@
         "id": "mcdplDocumentKind",
         "superType": "keyword",
         "description": "MCDPL document kind opener."
+      },
+      {
+        "id": "mcdplTemplateReference",
+        "superType": "type",
+        "description": "MCDPL template referenced by a specialize statement."
+      },
+      {
+        "id": "mcdplLibrary",
+        "superType": "namespace",
+        "description": "MCDPL library name referenced by a from library import statement."
       }
     ],
     "configuration": {

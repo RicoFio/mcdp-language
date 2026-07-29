@@ -112,7 +112,7 @@ impl ProjectSymbolIndex {
         let Some(model) = instance.model.as_ref() else {
             return Vec::new();
         };
-        let Some(target_document) = self.model_document(&model.name) else {
+        let Some(target_document) = self.model_document_for(model) else {
             return Vec::new();
         };
         let target_document = self.resolve_ports(target_document);
@@ -133,7 +133,7 @@ impl ProjectSymbolIndex {
             .iter()
             .find(|reference| contains_offset(reference.reference_range, offset))
         {
-            let target_document = self.model_document(&reference.name)?;
+            let target_document = self.model_document_for(reference)?;
             return Some(ResolvedSymbol {
                 target: SymbolTarget::Model {
                     uri: target_document.uri.clone(),
@@ -286,7 +286,7 @@ impl ProjectSymbolIndex {
     ) {
         for document in self.documents.values() {
             for reference in &document.model_references {
-                let Some(model_document) = self.model_document(&reference.name) else {
+                let Some(model_document) = self.model_document_for(reference) else {
                     continue;
                 };
                 if &model_document.uri == target_uri {
@@ -339,7 +339,7 @@ impl ProjectSymbolIndex {
             .iter()
             .find(|instance| instance.name == reference.instance_name)?;
         let model = instance.model.as_ref()?;
-        let target_document = self.model_document(&model.name)?;
+        let target_document = self.model_document_for(model)?;
         let target_document = self.resolve_ports(target_document);
         let port = target_document.port_named(reference.direction, &reference.port_name)?;
         Some((target_document, port))
@@ -385,6 +385,22 @@ impl ProjectSymbolIndex {
         self.documents
             .values()
             .filter(|document| model_name(&document.uri).as_deref() == Some(name))
+            .min_by_key(|document| document_priority(&document.uri))
+    }
+
+    /// Resolves a (possibly library-qualified) model reference to its
+    /// document, for example `` `task_management.task_manage `` resolves to
+    /// the `task_manage` model inside the `task_management.mcdplib` library.
+    fn model_document_for(&self, reference: &ModelReference) -> Option<&DocumentSymbols> {
+        let Some(library) = reference.library.as_deref() else {
+            return self.model_document(&reference.name);
+        };
+        self.documents
+            .values()
+            .filter(|document| {
+                model_name(&document.uri).as_deref() == Some(reference.name.as_str())
+                    && library_name(&document.uri).as_deref() == Some(library)
+            })
             .min_by_key(|document| document_priority(&document.uri))
     }
 
@@ -526,7 +542,7 @@ impl ProjectSymbolIndex {
             let Some(model) = instance.model.as_ref() else {
                 continue;
             };
-            let Some(target_document) = self.model_document(&model.name) else {
+            let Some(target_document) = self.model_document_for(model) else {
                 if reported.insert((
                     "lsp.undefined-model",
                     model.name_range.start,
@@ -663,6 +679,17 @@ pub(crate) struct DocumentSymbols {
     pub(crate) declared_units: Vec<DeclaredUnit>,
     pub(crate) specialize_target: Option<ModelReference>,
     pub(crate) relations: Vec<RelationConstraint>,
+    pub(crate) imports: Vec<ImportBinding>,
+}
+
+/// A `from library <lib> import interface <Name>, <Name2>` (or `model`)
+/// statement, capturing the library name and the imported symbol names so
+/// they can be highlighted and resolved distinctly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ImportBinding {
+    pub(crate) library_range: Option<TextRange>,
+    pub(crate) imported_name_ranges: Vec<TextRange>,
+    pub(crate) declaration_range: TextRange,
 }
 
 impl DocumentSymbols {
@@ -689,6 +716,7 @@ impl DocumentSymbols {
             declared_units: Vec::new(),
             relations: Vec::new(),
             specialize_target: None,
+            imports: Vec::new(),
         };
 
         let Some(syntax) = parsed.syntax else {
@@ -705,7 +733,7 @@ impl DocumentSymbols {
             });
         }
 
-        for statement in syntax.body.statements() {
+        for statement in syntax.leading_imports.iter().chain(syntax.body.statements().iter()) {
             let statement_tokens = statement_tokens(&parsed.tokens, statement);
             match statement.kind {
                 StatementKind::Provides => {
@@ -773,8 +801,12 @@ impl DocumentSymbols {
                         symbols.assignments.push(assignment);
                     }
                 }
+                StatementKind::Import => {
+                    if let Some(import) = import_binding(statement, &statement_tokens) {
+                        symbols.imports.push(import);
+                    }
+                }
                 StatementKind::Implements
-                | StatementKind::Import
                 | StatementKind::CatalogRecord
                 | StatementKind::BareExpression => {}
             }
@@ -1139,6 +1171,9 @@ pub(crate) struct InstanceBinding {
     pub(crate) name: String,
     pub(crate) name_range: TextRange,
     pub(crate) model: Option<ModelReference>,
+    /// True when the model reference points at a template being specialized,
+    /// e.g. `instance foo = instance specialize [..] \`SomeTemplate`.
+    pub(crate) specializes_template: bool,
     pub(crate) declaration_range: TextRange,
 }
 
@@ -1147,6 +1182,9 @@ pub(crate) struct ModelReference {
     pub(crate) name: String,
     pub(crate) name_range: TextRange,
     pub(crate) reference_range: TextRange,
+    /// Library qualifier for references like `` `library.model ``, resolving
+    /// to the `model` document inside the `library.mcdplib` directory.
+    pub(crate) library: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1598,7 +1636,7 @@ impl<'index, 'document, 'tokens, 'diagnostics>
             .iter()
             .filter_map(|instance| {
                 let model = instance.model.as_ref()?;
-                let target_document = self.index.model_document(&model.name)?;
+                let target_document = self.index.model_document_for(model)?;
                 let target_document = self.index.resolve_ports(target_document);
                 target_document.port_named(direction, &port.text)
             })
@@ -1914,7 +1952,30 @@ fn project_sources(uri: &Url) -> HashMap<Url, String> {
     let Some(root) = uri_directory(uri) else {
         return HashMap::new();
     };
-    let Ok(entries) = fs::read_dir(root) else {
+    let mut sources = read_mcdpl_dir(&root);
+
+    // Library-qualified references such as `` `task_management.task_manage ``
+    // point into a sibling `<library>.mcdplib` directory rather than the
+    // current one, so index those sibling libraries too when this document
+    // itself lives inside a `.mcdplib` directory.
+    if is_mcdplib_dir(&root)
+        && let Some(libraries_root) = root.parent()
+        && let Ok(entries) = fs::read_dir(libraries_root)
+    {
+        for path in entries
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir() && *path != root && is_mcdplib_dir(path))
+        {
+            sources.extend(read_mcdpl_dir(&path));
+        }
+    }
+
+    sources
+}
+
+fn read_mcdpl_dir(dir: &Path) -> HashMap<Url, String> {
+    let Ok(entries) = fs::read_dir(dir) else {
         return HashMap::new();
     };
 
@@ -1928,6 +1989,10 @@ fn project_sources(uri: &Url) -> HashMap<Url, String> {
             Some((uri, source))
         })
         .collect()
+}
+
+fn is_mcdplib_dir(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("mcdplib")
 }
 
 fn statement_tokens<'a>(tokens: &'a [Token], statement: &Statement) -> Vec<&'a Token> {
@@ -2017,10 +2082,85 @@ fn instance_binding(statement: &Statement, tokens: &[&Token]) -> Option<Instance
         return None;
     }
 
+    let specializes_template =
+        tokens.get(instance_index + 1).map(|token| token.text.as_str()) == Some("specialize");
+    let model = if specializes_template {
+        specialize_target_reference(tokens, instance_index + 1)
+    } else {
+        model_reference_after(tokens, instance_index + 1)
+    };
+
     Some(InstanceBinding {
         name: name.text.clone(),
         name_range: name.range,
-        model: model_reference_after(tokens, instance_index + 1),
+        model,
+        specializes_template,
+        declaration_range: statement.range,
+    })
+}
+
+/// Finds the model reference that follows a `specialize [..]` parameter
+/// list, e.g. the `` `SomeTemplate `` in
+/// `instance specialize [Battery: Battery] \`SomeTemplate`. Falls back to
+/// the first backtick reference after `start` if no bracketed parameter
+/// list is found (or is unterminated), matching the previous behaviour.
+fn specialize_target_reference(tokens: &[&Token], specialize_index: usize) -> Option<ModelReference> {
+    let open_index = specialize_index + 1;
+    if tokens.get(open_index).map(|token| token.text.as_str()) == Some("[") {
+        if let Some(close_index) = matching_bracket_forward(tokens, open_index, "[", "]") {
+            return model_reference_after(tokens, close_index + 1);
+        }
+    }
+    model_reference_after(tokens, specialize_index + 1)
+}
+
+/// Finds the index of the token matching `close` for the bracket `open`
+/// located at `open_index`, accounting for nested brackets of the same kind.
+fn matching_bracket_forward(tokens: &[&Token], open_index: usize, open: &str, close: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for index in open_index..tokens.len() {
+        let text = tokens[index].text.as_str();
+        if text == open {
+            depth += 1;
+        } else if text == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+fn import_binding(statement: &Statement, tokens: &[&Token]) -> Option<ImportBinding> {
+    let library_range = tokens
+        .iter()
+        .position(|token| token.text.as_str() == "library")
+        .and_then(|library_index| tokens.get(library_index + 1))
+        .filter(|token| is_symbol_name(token))
+        .map(|token| token.range);
+
+    let import_index = tokens
+        .iter()
+        .position(|token| token.text.as_str() == "import")?;
+    let imported_name_ranges: Vec<TextRange> = tokens[import_index + 1..]
+        .iter()
+        .filter(|token| {
+            is_symbol_name(token)
+                && !matches!(
+                    token.text.as_str(),
+                    "model" | "models" | "interface" | "interfaces"
+                )
+        })
+        .map(|token| token.range)
+        .collect();
+    if imported_name_ranges.is_empty() {
+        return None;
+    }
+
+    Some(ImportBinding {
+        library_range,
+        imported_name_ranges,
         declaration_range: statement.range,
     })
 }
@@ -2052,15 +2192,42 @@ fn model_reference_after(tokens: &[&Token], start: usize) -> Option<ModelReferen
 
 fn model_reference_at(tokens: &[&Token], backtick_index: usize) -> Option<ModelReference> {
     let backtick = tokens.get(backtick_index)?;
-    let name = tokens.get(backtick_index + 1)?;
-    if !is_symbol_name(name) {
+    let first = tokens.get(backtick_index + 1)?;
+    if !is_symbol_name(first) {
         return None;
     }
 
+    // A backtick reference may be qualified with a library prefix, for
+    // example `` `task_management.task_manage `` referring to the
+    // `task_manage.mcdp` model inside the `task_management.mcdplib` library.
+    let mut segments = vec![*first];
+    let mut index = backtick_index + 2;
+    while tokens.get(index).map(|token| token.text.as_str()) == Some(".")
+        && tokens
+            .get(index + 1)
+            .is_some_and(|token| is_symbol_name(token))
+    {
+        segments.push(&tokens[index + 1]);
+        index += 2;
+    }
+    let last = *segments.last().expect("segments always has at least one entry");
+    let library = if segments.len() > 1 {
+        Some(
+            segments[..segments.len() - 1]
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join("."),
+        )
+    } else {
+        None
+    };
+
     Some(ModelReference {
-        name: name.text.clone(),
-        name_range: name.range,
-        reference_range: TextRange::new(backtick.range.start, name.range.end),
+        name: last.text.clone(),
+        name_range: last.range,
+        reference_range: TextRange::new(backtick.range.start, last.range.end),
+        library,
     })
 }
 
@@ -2259,6 +2426,19 @@ fn model_name(uri: &Url) -> Option<String> {
     uri.to_file_path().ok().and_then(|path| {
         path.file_stem()
             .map(|name| name.to_string_lossy().into_owned())
+    })
+}
+
+fn library_name(uri: &Url) -> Option<String> {
+    uri.to_file_path().ok().and_then(|path| {
+        let parent = path.parent()?;
+        if parent.extension().and_then(|extension| extension.to_str()) == Some("mcdplib") {
+            parent
+                .file_stem()
+                .map(|name| name.to_string_lossy().into_owned())
+        } else {
+            None
+        }
     })
 }
 
@@ -3192,6 +3372,36 @@ mcdp {
 ";
         temp_dir.write("fleet.mcdp", source);
         let uri = temp_dir.url("fleet.mcdp");
+        let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
+
+        let diagnostics = index.semantic_diagnostics(&uri);
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn resolves_library_qualified_instance_references_across_sibling_directories() {
+        let temp_dir = TempDir::new("library-qualified-instance");
+        temp_dir.write(
+            "task_management.mcdplib/task_manage.mcdp",
+            "\
+mcdp {
+  provides mission_distance [m]
+  requires velocity [m/s]
+}
+",
+        );
+        let source = "\
+mcdp {
+  requires velocity [m/s]
+
+  task_manage = instance `task_management.task_manage
+
+  velocity required by task_manage <= provided velocity
+}
+";
+        temp_dir.write("uav_from_template.mcdplib/uav_with_task.mcdp", source);
+        let uri = temp_dir.url("uav_from_template.mcdplib/uav_with_task.mcdp");
         let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
 
         let diagnostics = index.semantic_diagnostics(&uri);

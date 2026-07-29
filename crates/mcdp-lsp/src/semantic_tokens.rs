@@ -1,6 +1,6 @@
 //! Semantic-token encoding for syntax and symbol-aware highlighting.
 
-use mcdp_language::{TextRange, TokenKind, lex};
+use mcdp_language::{DocumentKind, TextRange, TokenKind, lex};
 use tower_lsp::lsp_types::{
     SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -22,6 +22,8 @@ const TOKEN_TYPE_INSTANCE: u32 = 8;
 const TOKEN_TYPE_MODEL_REFERENCE: u32 = 9;
 const TOKEN_TYPE_RESOURCE_BINDING: u32 = 10;
 const TOKEN_TYPE_DOCUMENT_KIND: u32 = 11;
+const TOKEN_TYPE_TEMPLATE_REFERENCE: u32 = 12;
+const TOKEN_TYPE_LIBRARY: u32 = 13;
 
 pub(crate) fn server_capabilities() -> SemanticTokensServerCapabilities {
     SemanticTokensServerCapabilities::SemanticTokensOptions(options())
@@ -51,6 +53,8 @@ fn legend() -> SemanticTokensLegend {
             SemanticTokenType::new("mcdplModelReference"),
             SemanticTokenType::new("mcdplResourceBinding"),
             SemanticTokenType::new("mcdplDocumentKind"),
+            SemanticTokenType::new("mcdplTemplateReference"),
+            SemanticTokenType::new("mcdplLibrary"),
         ],
         token_modifiers: Vec::<SemanticTokenModifier>::new(),
     }
@@ -133,7 +137,22 @@ impl<'a> DocumentSemanticRoles<'a> {
         if self.is_resource_binding_prefix(kind, range) {
             return Some(RoleDecision::Token(TOKEN_TYPE_RESOURCE_BINDING));
         }
+        if self.is_specialize_template_target(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_TEMPLATE_REFERENCE));
+        }
+        if self.is_instance_specialize_template_target(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_TEMPLATE_REFERENCE));
+        }
+        if self.is_import_library_name(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_LIBRARY));
+        }
+        if self.is_import_name(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_MODEL_REFERENCE));
+        }
         if self.is_instance_model_reference_name(range) {
+            return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
+        }
+        if self.is_specialize_parameter_reference(range) {
             return Some(RoleDecision::Token(TOKEN_TYPE_INSTANCE));
         }
         if self.is_model_reference_name(range) {
@@ -222,6 +241,52 @@ impl<'a> DocumentSemanticRoles<'a> {
             .any(|reference| reference.name_range == range)
     }
 
+    /// The template a `specialize [...] \`Template` statement instantiates,
+    /// highlighted distinctly from the concrete instances bound to it.
+    fn is_specialize_template_target(&self, range: TextRange) -> bool {
+        self.symbols
+            .specialize_target
+            .as_ref()
+            .is_some_and(|target| target.name_range == range)
+    }
+
+    /// The template targeted by an embedded `instance specialize [...] \`Template`
+    /// binding, highlighted the same as top-level specialize documents rather
+    /// than as a plain instance.
+    fn is_instance_specialize_template_target(&self, range: TextRange) -> bool {
+        self.symbols.instances.iter().any(|instance| {
+            instance.specializes_template
+                && instance
+                    .model
+                    .as_ref()
+                    .is_some_and(|model| model.name_range == range)
+        })
+    }
+
+    /// The library name in a `from library <lib> import interface <Name>` statement.
+    fn is_import_library_name(&self, range: TextRange) -> bool {
+        self.symbols
+            .imports
+            .iter()
+            .any(|import| import.library_range == Some(range))
+    }
+
+    /// The imported symbol name(s) in a `from library <lib> import interface <Name>` statement.
+    fn is_import_name(&self, range: TextRange) -> bool {
+        self.symbols
+            .imports
+            .iter()
+            .any(|import| import.imported_name_ranges.contains(&range))
+    }
+
+    /// Concrete model/interface bindings inside a `specialize [Name: \`model, ...]`
+    /// parameter list, highlighted the same as other instance references.
+    fn is_specialize_parameter_reference(&self, range: TextRange) -> bool {
+        self.symbols.kind == Some(DocumentKind::Specialize)
+            && self.is_model_reference_name(range)
+            && !self.is_specialize_template_target(range)
+    }
+
     fn is_instance_name_declaration(&self, range: TextRange) -> bool {
         self.symbols
             .instances
@@ -303,7 +368,7 @@ mod tests {
 
         assert_eq!(options.range, Some(false));
         assert_eq!(options.full, Some(SemanticTokensFullOptions::Bool(true)));
-        assert_eq!(options.legend.token_types.len(), 12);
+        assert_eq!(options.legend.token_types.len(), 14);
         assert!(options.legend.token_modifiers.is_empty());
     }
 
@@ -531,6 +596,91 @@ mcdp {
             )));
             search_start = unit_offset + "unit".len();
         }
+    }
+
+    #[test]
+    fn specialize_template_target_and_parameter_bindings_get_distinct_colors() {
+        let source = "\
+specialize [
+  Battery: `batteries_uncertain1.batteries,
+  Actuation: `actuations_v2.actuation
+] `UAVCompleteTemplate
+";
+        let uri = test_file_url("/tmp/uav_actuation_battery.mcdp");
+        let symbols = DocumentSymbols::parse(uri, source);
+        let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
+
+        assert!(tokens.contains(&absolute_token(
+            source,
+            "UAVCompleteTemplate",
+            TOKEN_TYPE_TEMPLATE_REFERENCE
+        )));
+        let batteries_offset = offset_after(source, "batteries_uncertain1.");
+        assert!(tokens.contains(&absolute_token_at_offset(
+            source,
+            "batteries",
+            batteries_offset,
+            TOKEN_TYPE_INSTANCE
+        )));
+        assert!(!tokens.contains(&absolute_token_at_offset(
+            source,
+            "batteries",
+            batteries_offset,
+            TOKEN_TYPE_MODEL_REFERENCE
+        )));
+    }
+
+    #[test]
+    fn instance_specialize_template_target_is_template_colored_not_instance() {
+        let source = "\
+template [Battery: BatteryInterface]
+mcdp {
+  actuation_energetics = instance specialize [
+    Battery: Battery
+  ] `ActuationEnergeticsTemplate
+}
+";
+        let uri = test_file_url("/tmp/UAVCompleteTemplate.mcdp_template");
+        let symbols = DocumentSymbols::parse(uri, source);
+        let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
+
+        assert!(tokens.contains(&absolute_token(
+            source,
+            "ActuationEnergeticsTemplate",
+            TOKEN_TYPE_TEMPLATE_REFERENCE
+        )));
+        assert!(!tokens.contains(&absolute_token(
+            source,
+            "ActuationEnergeticsTemplate",
+            TOKEN_TYPE_INSTANCE
+        )));
+    }
+
+    #[test]
+    fn from_library_import_statements_color_library_and_imported_names() {
+        let source = "\
+from library batteries_uncertain1 import interface BatteryInterface
+
+template [Battery: BatteryInterface]
+mcdp {
+  provides range [km]
+}
+";
+        let uri = test_file_url("/tmp/UAVCompleteTemplate.mcdp_template");
+        let symbols = DocumentSymbols::parse(uri, source);
+        let tokens = absolute_tokens(&semantic_tokens(source, Some(&symbols)).data);
+
+        assert!(tokens.contains(&absolute_token(
+            source,
+            "batteries_uncertain1",
+            TOKEN_TYPE_LIBRARY
+        )));
+        assert!(tokens.contains(&absolute_token_at_offset(
+            source,
+            "BatteryInterface",
+            offset_after(source, "import interface "),
+            TOKEN_TYPE_MODEL_REFERENCE
+        )));
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
