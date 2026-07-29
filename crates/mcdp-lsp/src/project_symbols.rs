@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use mcdp_language::{
     DocumentKind, PortDirection as LanguagePortDirection, PosetRef, SemanticModel, Severity,
-    SourceId, Statement, StatementKind, TextRange, Token, TokenKind, UnitExpression, lex,
-    lower_document, normalize_unit_text, parse_document, parse_unit_expression_text,
+    SourceId, Statement, StatementKind, SyntaxBody, TextRange, Token, TokenKind, UnitExpression,
+    lex, lower_document, normalize_unit_text, parse_document, parse_unit_expression_text,
 };
 use tower_lsp::lsp_types::Url;
 
@@ -115,6 +115,7 @@ impl ProjectSymbolIndex {
         let Some(target_document) = self.model_document(&model.name) else {
             return Vec::new();
         };
+        let target_document = self.resolve_ports(target_document);
         let mut ports = match direction {
             PortDirection::Provided => target_document.provides.clone(),
             PortDirection::Required => target_document.requires.clone(),
@@ -339,6 +340,7 @@ impl ProjectSymbolIndex {
             .find(|instance| instance.name == reference.instance_name)?;
         let model = instance.model.as_ref()?;
         let target_document = self.model_document(&model.name)?;
+        let target_document = self.resolve_ports(target_document);
         let port = target_document.port_named(reference.direction, &reference.port_name)?;
         Some((target_document, port))
     }
@@ -384,6 +386,28 @@ impl ProjectSymbolIndex {
             .values()
             .filter(|document| model_name(&document.uri).as_deref() == Some(name))
             .min_by_key(|document| document_priority(&document.uri))
+    }
+
+    /// Follows `specialize [...] `Template` indirections to the document that
+    /// actually declares the `provides`/`requires` ports, so instances of a
+    /// specialized template resolve to the template's port declarations.
+    fn resolve_ports<'a>(&'a self, document: &'a DocumentSymbols) -> &'a DocumentSymbols {
+        let mut current = document;
+        let mut visited = BTreeSet::new();
+        while current.kind == Some(DocumentKind::Specialize)
+            && current.provides.is_empty()
+            && current.requires.is_empty()
+            && visited.insert(current.uri.clone())
+        {
+            let Some(target) = current.specialize_target.as_ref() else {
+                break;
+            };
+            let Some(target_document) = self.model_document(&target.name) else {
+                break;
+            };
+            current = target_document;
+        }
+        current
     }
 
     fn poset_document(&self, name: &str) -> Option<&DocumentSymbols> {
@@ -524,6 +548,7 @@ impl ProjectSymbolIndex {
                 }
                 continue;
             };
+            let target_document = self.resolve_ports(target_document);
 
             if target_document
                 .port_named(reference.direction, &reference.port_name)
@@ -636,6 +661,7 @@ pub(crate) struct DocumentSymbols {
     pub(crate) model_references: Vec<ModelReference>,
     pub(crate) resource_bindings: Vec<ResourceBinding>,
     pub(crate) declared_units: Vec<DeclaredUnit>,
+    pub(crate) specialize_target: Option<ModelReference>,
     pub(crate) relations: Vec<RelationConstraint>,
 }
 
@@ -662,11 +688,22 @@ impl DocumentSymbols {
             resource_bindings: Vec::new(),
             declared_units: Vec::new(),
             relations: Vec::new(),
+            specialize_target: None,
         };
 
         let Some(syntax) = parsed.syntax else {
             return symbols;
         };
+
+        if let SyntaxBody::Specialize { target, .. } = &syntax.body {
+            symbols.specialize_target = target.as_ref().and_then(|entry| {
+                symbols
+                    .model_references
+                    .iter()
+                    .find(|reference| reference.reference_range == entry.range)
+                    .cloned()
+            });
+        }
 
         for statement in syntax.body.statements() {
             let statement_tokens = statement_tokens(&parsed.tokens, statement);
@@ -1562,6 +1599,7 @@ impl<'index, 'document, 'tokens, 'diagnostics>
             .filter_map(|instance| {
                 let model = instance.model.as_ref()?;
                 let target_document = self.index.model_document(&model.name)?;
+                let target_document = self.index.resolve_ports(target_document);
                 target_document.port_named(direction, &port.text)
             })
             .map(|symbol| UnitFactors::from_optional_symbol_text(symbol.unit.as_ref()));
@@ -3125,6 +3163,40 @@ mcdp {
             .find(|diagnostic| diagnostic.code == "lsp.undefined-required-port")
             .expect("undefined required port diagnostic should exist");
         assert_eq!(text_at(source, diagnostic.range), "fuel_cost");
+    }
+
+    #[test]
+    fn resolves_ports_through_specialize_indirection() {
+        let temp_dir = TempDir::new("specialize-port-indirection");
+        temp_dir.write(
+            "FuelTemplate.mcdp_template",
+            "\
+template [Engine: EngineInterface]
+mcdp {
+  provides range [km]
+  requires fuel_cost [USD]
+}
+",
+        );
+        temp_dir.write(
+            "fuel.mcdp",
+            "specialize [Engine: `diesel] `FuelTemplate",
+        );
+        let source = "\
+mcdp {
+  requires total_cost [USD]
+  sub fu = instance `fuel
+
+  required total_cost >= fuel_cost required by fu
+}
+";
+        temp_dir.write("fleet.mcdp", source);
+        let uri = temp_dir.url("fleet.mcdp");
+        let index = ProjectSymbolIndex::for_uri(&uri, &HashMap::new());
+
+        let diagnostics = index.semantic_diagnostics(&uri);
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
     #[test]
